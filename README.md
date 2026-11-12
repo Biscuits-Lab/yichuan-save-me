@@ -4,9 +4,9 @@
 
 ## 试玩
 
-当前修复版 **v0.2.1** 待正式发布。可双击 `build/windows-v0.2.1/毅川救我.exe`，或解压 `build/毅川救我-v0.2.1-肉鸽版-Windows-x64.zip` 后运行 EXE；资源已内嵌，无需安装 Godot 或联网。历史发布包：[v0.2.0](https://github.com/Biscuits-Lab/yichuan-save-me/releases/tag/v0.2.0)。
+到 [v0.2.1 Releases 下载 Windows 64 位修复版](https://github.com/Biscuits-Lab/yichuan-save-me/releases/tag/v0.2.1)。双击 EXE 即可运行，或下载 ZIP 解压后运行其中的 EXE；资源已内嵌，无需安装 Godot 或联网。本地构建输出为 `build/windows-v0.2.1/毅川救我.exe` 和 `build/毅川救我-v0.2.1-肉鸽版-Windows-x64.zip`。
 
-最新源码另外修复了主角转身、切换动作时的视觉瞬移与重复残影，尚未重新打包；现有本地 EXE 和 ZIP 不含这项修复。
+本版修复主角转身、切换动作时的视觉瞬移与重复残影，并改善关卡目标引导、节点通路和机关预警。
 
 从源码运行：用 Godot 4.5 或更新的 4.x 导入 `project.godot`，按 F5。当前工作目录也可双击 **开始游戏.cmd**。缺少本地运行时可执行 `python tools/bootstrap.py`，需要 Python 与 requests；运行时下载到 `.tools/`。
 
