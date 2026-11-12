@@ -4,7 +4,9 @@
 
 ## 试玩
 
-到 [v0.2.0 Releases 下载 Windows 64 位肉鸽版](https://github.com/Biscuits-Lab/yichuan-save-me/releases/tag/v0.2.0)。双击 EXE 即可运行，或下载 ZIP 解压后运行其中的 EXE；资源已内嵌，无需安装 Godot 或联网。本地构建输出为 `build/windows-rogue/毅川救我.exe` 和 `build/毅川救我-v0.2.0-肉鸽版-Windows-x64.zip`。
+当前修复版 **v0.2.1** 待正式发布。可双击 `build/windows-v0.2.1/毅川救我.exe`，或解压 `build/毅川救我-v0.2.1-肉鸽版-Windows-x64.zip` 后运行 EXE；资源已内嵌，无需安装 Godot 或联网。历史发布包：[v0.2.0](https://github.com/Biscuits-Lab/yichuan-save-me/releases/tag/v0.2.0)。
+
+最新源码另外修复了主角转身、切换动作时的视觉瞬移与重复残影，尚未重新打包；现有本地 EXE 和 ZIP 不含这项修复。
 
 从源码运行：用 Godot 4.5 或更新的 4.x 导入 `project.godot`，按 F5。当前工作目录也可双击 **开始游戏.cmd**。缺少本地运行时可执行 `python tools/bootstrap.py`，需要 Python 与 requests；运行时下载到 `.tools/`。
 
@@ -25,6 +27,8 @@
 | 渲染天守 | Nanite 装配碎境、Lumen 反射幻城、BUILD 最后一次打包 |
 
 每局可调换章节内的事件顺序，并按种子从六种布局模板生成平台组合。子关卡有上下层路线、断桥、周期机关、可选宝箱和 NPC。精英路线增加敌人和机关，敌人生命 +30%，工单收益 +50%；补给路线进入下一关时恢复 2 点生命。
+
+两道战区封锁门会分别在对应节点修好后打开。持续目标箭头指向剩余敌人或当前高台节点，节点旁明确显示 E 交互提示；悬空平台可从下方跳上。修复两处节点后，右侧末段出现 Boss，尽头也有可见出口标记。地面喷口采用黄黑警戒条、警示标志以及待机 / 预警 / 喷发状态，危险范围与实际判定一致。
 
 12 类敌人拥有对应造型与行为：机械同步虫、编译幽灵、锁甲武士、服务器鬼武者，以及新增的 Shader 晶体法师、Nanite 构造体、Lumen 灯蛾、DDC 拟态箱、GC 收集妖、泄漏软泥、热重载机械龙、网络延迟蝠。关底版本拥有更高生命、蓄力预警和强化招式，例如召唤、突进、地面法阵、环形弹幕和冲击波。
 
@@ -74,6 +78,8 @@ GC 区域能量恢复降低、击杀回能提高；DDC 宝箱会触发拟态怪�
 
 ```powershell
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file .tools/tests.log --fixed-fps 60 --script tools/test_game.gd -- --no-music
+.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file .tools/navigation.log --fixed-fps 60 --script tools/test_navigation.gd -- --no-audio
+.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --path . --log-file .tools/player-motion.log --audio-driver Dummy --fixed-fps 120 --script tools/test_player_motion.gd -- --no-audio
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --path . --log-file .tools/render.log --audio-driver Dummy --fixed-fps 60 --script tools/render_preview.gd -- --no-audio
 python tools/build_windows.py
 ```

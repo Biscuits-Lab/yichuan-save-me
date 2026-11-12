@@ -37,17 +37,16 @@ func _draw() -> void:
 		draw_string(game.font,Vector2(515,278),game.event.tool,HORIZONTAL_ALIGNMENT_LEFT,-1,22,tint)
 		draw_string(game.font,Vector2(515,308),game.room_data.name,HORIZONTAL_ALIGNMENT_LEFT,-1,19,PAPER)
 	for i in range(game.room_data.traps.size()):
-		var rect: Rect2 = game.room_data.traps[i]
-		var phase: float = game.trap_phase(i)
-		draw_rect(rect,Color("263e46"))
-		for j in range(5):
-			draw_rect(Rect2(rect.position + Vector2(j * 29 + 8,5),Vector2(13,3)),Color("71877b"))
-		if phase > 2.9 and game.room_phase != "approach":
-			var active: bool = phase >= 3.8 and phase < 4.6
-			var warning: Color = Color("e8b883") if not active else tint
-			draw_rect(Rect2(rect.position + Vector2(0,-65),Vector2(rect.size.x,65)),Color(warning,0.16 if not active else 0.4))
-			for j in range(6):
-				draw_line(rect.position + Vector2(j * 28,-4),rect.position + Vector2(j * 28 + 15,-25 if not active else -60),Color(warning,0.8),2)
+		trap(i)
+	for i in range(game.gates.size()):
+		gate(game.gates[i],i)
+	# The end of the room remains a visible destination even while the boss lives.
+	var exit_p := Vector2(game.world_length - 125,600)
+	draw_rect(Rect2(exit_p + Vector2(-39,-175),Vector2(78,175)),Color("1d3d45"))
+	draw_rect(Rect2(exit_p + Vector2(-32,-168),Vector2(64,162)),Color("0c2534"))
+	draw_rect(Rect2(exit_p + Vector2(-40,-180),Vector2(80,7)),tint)
+	draw_string(game.font,exit_p + Vector2(-48,-199),"关底 · 出口",HORIZONTAL_ALIGNMENT_LEFT,-1,20,PAPER)
+	draw_string(game.font,exit_p + Vector2(-67,-105),"击败 Boss 后解锁",HORIZONTAL_ALIGNMENT_LEFT,-1,15,tint)
 	for hazard in game.hazards:
 		var color: Color = Color("f1b786") if hazard.delay > 0 else Color("ed8a79")
 		draw_rect(hazard.rect,Color(color,0.16 if hazard.delay > 0 else 0.55))
@@ -134,4 +133,70 @@ func terminal(relay: Dictionary, index: int) -> void:
 	draw_string(game.pixel_font,p + Vector2(-18,-57),"OK" if relay.done else str(index + 1),HORIZONTAL_ALIGNMENT_LEFT,-1,13,tint)
 	if ready:
 		draw_circle(p + Vector2(0,-63),41,Color(tint,0.07 + sin(game.clock * 3) * 0.02))
-		draw_string(game.font,p + Vector2(-56,-105),"E 重启节点 " + str(index + 1),HORIZONTAL_ALIGNMENT_LEFT,-1,16,tint)
+		draw_colored_polygon(PackedVector2Array([p + Vector2(-10,-116),p + Vector2(10,-116),p + Vector2(0,-104)]),tint)
+		draw_string(game.font,p + Vector2(-75,-139),"节点 %d · 按 E 重启" % (index + 1),HORIZONTAL_ALIGNMENT_LEFT,-1,18,tint)
+
+func trap(index: int) -> void:
+	var rect: Rect2 = game.room_data.traps[index]
+	var state: String = game.trap_state(index)
+	var safe: bool = state == "safe"
+	var active: bool = state == "active"
+	var warning: bool = state == "warning"
+	var amber := Color("e9bf69")
+	var color: Color = Color("9bd2bb") if safe else (Color("ee9276") if active else amber)
+	var base := Rect2(rect.position.x,593,rect.size.x,7)
+	draw_rect(base,Color("101e29"))
+	draw_rect(base,color,false,1)
+	# Flush-mounted, striped warning plate; no raised platform silhouette.
+	for j in range(int(rect.size.x / 16)):
+		var x: float = rect.position.x + j * 16
+		draw_colored_polygon(PackedVector2Array([Vector2(x,593),Vector2(x + 7,593),Vector2(x + 13,600),Vector2(x + 6,600)]),color)
+	for j in range(5):
+		var p := Vector2(rect.position.x + 8 + j * 28,583)
+		draw_rect(Rect2(p,Vector2(20,9)),Color("14232e"))
+		draw_rect(Rect2(p + Vector2(3,2),Vector2(14,3)),color if warning or active else Color("9c704d"))
+	var center := Vector2(rect.get_center().x,563)
+	draw_colored_polygon(PackedVector2Array([center + Vector2(-10,8),center + Vector2(0,-10),center + Vector2(10,8)]),color)
+	draw_rect(Rect2(center + Vector2(-1,-4),Vector2(2,6)),Color("202936"))
+	draw_rect(Rect2(center + Vector2(-1,4),Vector2(2,2)),Color("202936"))
+	var label: String = "待机 · 周期喷口"
+	if safe:
+		label = "缓存监测 · 安全"
+	elif warning:
+		label = "预警 · 立即避开"
+	elif active:
+		label = "回收 · 消耗能量" if game.event.hazard == "vacuum" else "危险 · 正在喷发"
+	if warning or active:
+		var area: Rect2 = game.trap_area(index)
+		draw_rect(area,Color(color,0.12 if warning else 0.28))
+		draw_rect(area,color,false,2)
+		if warning:
+			for j in range(7):
+				var x: float = rect.position.x + j * 23
+				draw_line(Vector2(x,590),Vector2(x + 13,572),Color(color,0.75),2)
+		else:
+			for j in range(14):
+				var x: float = rect.position.x + 5 + fmod(j * 31.0,rect.size.x - 10)
+				var y: float = 588 - fmod(game.clock * 95 + j * 19,69)
+				draw_rect(Rect2(x,y,4,7 + j % 3),color)
+	draw_rect(Rect2(rect.position.x + 4,526,rect.size.x - 8,24),Color(0.035,0.10,0.14,0.9))
+	draw_string(game.font,Vector2(rect.position.x + 9,544),label,HORIZONTAL_ALIGNMENT_LEFT,-1,13,color)
+
+func gate(data: Dictionary, index: int) -> void:
+	var x: float = data.rect.position.x
+	if x < game.camera_x - 200 or x > game.camera_x + 1450:
+		return
+	var color: Color = Color("acdcb9") if data.open else Color("e5b37a")
+	draw_rect(Rect2(x - 11,-20,8,620),Color("4b696c"))
+	draw_rect(Rect2(x + 27,-20,8,620),Color("4b696c"))
+	if data.open:
+		draw_string(game.font,Vector2(x - 37,195),"通路已恢复",HORIZONTAL_ALIGNMENT_LEFT,-1,16,color)
+		return
+	draw_rect(Rect2(x - 2,-20,28,620),Color(color,0.12))
+	for j in range(30):
+		var y: float = -15 + fmod(j * 21.0 + game.clock * 28,606)
+		draw_rect(Rect2(x,y,24,9),Color(color,0.6))
+	draw_rect(Rect2(x - 152,268,328,69),Color("112b35"))
+	draw_rect(Rect2(x - 152,268,328,69),Color("805f4d"),false,1)
+	draw_string(game.font,Vector2(x - 130,294),"战区封锁 · 节点 %d 未修复" % (index + 1),HORIZONTAL_ALIGNMENT_LEFT,-1,20,color)
+	draw_string(game.font,Vector2(x - 130,322),game.gate_hint(index),HORIZONTAL_ALIGNMENT_LEFT,-1,16,PAPER)

@@ -78,7 +78,7 @@ func title_screen() -> void:
 		draw_rect(Rect2(i * 14,0,14,720),Color(0.025,0.06,0.105,clampf(0.92 - i / 69.0,0,0.92)))
 	draw_rect(Rect2(94,54,8,8),MINT)
 	pixel("YICHUAN / ROGUELITE",Vector2(116,64),10,MINT)
-	pixel("BUILD 02",Vector2(1100,64),9,CREAM)
+	pixel("BUILD 02.1",Vector2(1090,64),9,CREAM)
 	panel(Rect2(96,145,227,31),Color("17323a"),Color("577b70"))
 	text("横版肉鸽 · 今天也在救项目",Vector2(109,167),15,MINT)
 	text("毅川",Vector2(90,264),84,CREAM,game.display_font)
@@ -119,7 +119,7 @@ func game_hud() -> void:
 	var objective: String = "前进进入战区 · E 与路上的 NPC 交谈"
 	match game.room_phase:
 		"combat": objective = "清理第 %d 波 · 剩余 %d 个故障" % [game.room_wave + 1,game.enemies.size()]
-		"relay": objective = "跳到节点 %d（地图菱形），按 E 修复" % (game.relay_count + 1)
+		"relay": objective = "跟随目标箭头，跳上高台修复节点 %d" % (game.relay_count + 1)
 		"boss": objective = "关底 Boss · " + game.event.boss
 		"reward": objective = "故障已解决 · 选择技能进入下一关"
 	text(objective,Vector2(781,79),16,MINT)
@@ -133,7 +133,8 @@ func game_hud() -> void:
 	for i in range(2):
 		var relay: Dictionary = game.room_data.relays[i]
 		var x: float = 780 + relay.p.x / game.world_length * 367
-		draw_circle(Vector2(x,151),4,MINT if relay.done else game.event.color)
+		draw_colored_polygon(PackedVector2Array([Vector2(x,145),Vector2(x + 6,151),Vector2(x,157),Vector2(x - 6,151)]),MINT if relay.done else game.event.color)
+		text(str(i + 1),Vector2(x - 3,173),11,MUTED)
 	draw_circle(Vector2(780 + game.player.position.x / game.world_length * 367,151),3,CREAM)
 	draw_rect(Rect2(0,627,1280,93),Color(0.035,0.09,0.13,0.98))
 	draw_line(Vector2(0,627),Vector2(1280,627),Color("3a5653"),1)
@@ -164,6 +165,8 @@ func game_hud() -> void:
 		panel(Rect2(390,172,500,42),Color("142530"),Color("805b5d"))
 		draw_rect(Rect2(395,200,490.0 * maxf(0,game.boss_ref.hp) / game.boss_ref.max_hp,8),game.event.color)
 		center(game.event.boss,Vector2(640,193),16)
+	if game.state == "playing" and game.chapter_time <= 0:
+		navigation()
 	if game.damage_flash > 0:
 		draw_rect(Rect2(0,0,1280,720),Color(0.8,0.22,0.2,game.damage_flash * 0.4))
 
@@ -175,6 +178,31 @@ func dialogue() -> void:
 	text(game.speech,p + Vector2(14,29),21,INK,game.speech_font)
 	draw_colored_polygon(PackedVector2Array([p + Vector2(width * 0.5 - 6,41),p + Vector2(width * 0.5 + 6,41),p + Vector2(width * 0.5,49)]),speech_style.bg_color)
 	text(game.speaker,p + Vector2(0,-8),11,CREAM)
+
+func navigation() -> void:
+	var target: Dictionary = game.objective_target()
+	var p: Vector2 = target.p - Vector2(game.camera_x,0)
+	var distance: float = game.player.position.distance_to(target.p)
+	if game.room_phase in ["combat","boss"] and p.x > 60 and p.x < 1220 and distance < 360:
+		return
+	var off_left: bool = p.x < 140
+	var off_right: bool = p.x > 1110
+	var label: String = target.label
+	if off_left:
+		label = "← " + label
+	elif off_right:
+		label += " →"
+	else:
+		label = "↓ " + label
+	var width: float = maxf(190,game.font.get_string_size(target.hint,HORIZONTAL_ALIGNMENT_LEFT,-1,15).x + 30)
+	var x: float = 26 if off_left else (1254 - width if off_right else clampf(p.x - width * 0.5,26,1254 - width))
+	var y: float = 238 if off_left or off_right else clampf(p.y - 183,225,408)
+	panel(Rect2(x,y,width,64),Color(0.04,0.12,0.16,0.95),target.color)
+	text(label,Vector2(x + 14,y + 26),21,target.color,game.speech_font)
+	text(target.hint,Vector2(x + 14,y + 51),15,CREAM)
+	if not off_left and not off_right:
+		var cy: float = y + 70 + sin(game.clock * 4) * 3
+		draw_colored_polygon(PackedVector2Array([Vector2(p.x - 8,cy),Vector2(p.x + 8,cy),Vector2(p.x,cy + 10)]),target.color)
 
 func upgrades() -> void:
 	scrim()

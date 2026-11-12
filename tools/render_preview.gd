@@ -43,6 +43,8 @@ func run() -> void:
 	game.camera_x = 2150
 	game.world.position.x = -2150
 	game.player.reset_physics_interpolation()
+	for i in range(game.gates.size()):
+		game.open_gate(i)
 	game.summon_boss()
 	game.boss_ref.telegraph = 0.7
 	game.say("毅川救我",8,"若宇")

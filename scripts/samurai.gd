@@ -29,9 +29,7 @@ var run_phase: float = 0
 var visual_attack: float = 0
 var clock: float = 0
 var visual: Sprite2D
-var ghost: Sprite2D
 var visual_state: String = "idle"
-var transition: float = 0
 
 func _ready() -> void:
 	var hitbox := CollisionShape2D.new()
@@ -43,14 +41,13 @@ func _ready() -> void:
 	collision_layer = 2
 	collision_mask = 1
 	z_index = 5
-	ghost = Sprite2D.new()
-	ghost.centered = false
-	ghost.region_enabled = true
-	ghost.visible = false
-	add_child(ghost)
 	visual = Sprite2D.new()
 	visual.centered = false
 	visual.region_enabled = true
+	# The body moves on physics ticks. Atlas offsets and facing change on render
+	# frames, so only the body's transform may use physics interpolation.
+	# In 2D a child with interpolation off still inherits its parent's smooth motion.
+	visual.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	var blend := ShaderMaterial.new()
 	blend.shader = load("res://assets/sprite_blend.gdshader")
 	visual.material = blend
@@ -72,8 +69,6 @@ func reset_motion() -> void:
 	facing = 1
 	run_phase = 0
 	visual_attack = 0
-	transition = 0
-	ghost.visible = false
 
 func bounds() -> Rect2:
 	return Rect2(position + Vector2(-17,-70),Vector2(34,70))
@@ -216,7 +211,6 @@ func _process(delta: float) -> void:
 		clock += delta
 		run_phase = fmod(run_phase + delta * 20 * clampf(absf(velocity.x) / 290,0,1.3),16)
 		visual_attack += delta / maxf(0.1,attack_duration) * 15
-		transition = maxf(0,transition - delta)
 	var next_state: String = "idle"
 	var atlas: RefCounted = game.actions_atlas
 	var frame: float = 0
@@ -237,12 +231,6 @@ func _process(delta: float) -> void:
 		next_state = "run"
 		atlas = game.run_atlas
 		frame = run_phase
-	if visual_state != next_state and visual.texture:
-		ghost.texture = visual.texture
-		ghost.region_rect = visual.region_rect
-		ghost.transform = visual.transform
-		ghost.material = visual.material.duplicate()
-		transition = 0.065
 	visual_state = next_state
 	var first: int = int(frame)
 	var second: int = (first + 1) % 16 if next_state == "run" else mini(15,first + 1)
@@ -253,15 +241,19 @@ func _process(delta: float) -> void:
 	var scale_factor: float = 105.0 / atlas.row_heights[first / atlas.columns]
 	visual.texture = atlas.texture
 	visual.region_rect = a.region
-	visual.scale = Vector2(facing * scale_factor,scale_factor)
-	visual.position = -a.anchor * visual.scale
+	# Flip texels inside the frame instead of interpolating a signed transform.
+	# Reflect the frame's anchor as well, keeping the same root under both facings.
+	visual.flip_h = facing < 0
+	visual.scale = Vector2.ONE * scale_factor
+	var anchor: Vector2 = a.anchor
+	if visual.flip_h:
+		anchor.x = a.region.size.x - anchor.x
+	visual.position = -anchor * scale_factor
 	var material: ShaderMaterial = visual.material
 	var dimensions: Vector2 = atlas.texture.get_size()
 	material.set_shader_parameter("frame_rect",Vector4(a.region.position.x / dimensions.x,a.region.position.y / dimensions.y,a.region.size.x / dimensions.x,a.region.size.y / dimensions.y))
 	material.set_shader_parameter("next_rect",Vector4(b.region.position.x / dimensions.x,b.region.position.y / dimensions.y,b.region.size.x / dimensions.x,b.region.size.y / dimensions.y))
 	material.set_shader_parameter("blend_weight",fmod(frame,1.0))
-	ghost.visible = transition > 0
-	ghost.modulate.a = transition / 0.065 * 0.35
 	modulate.a = 0.6 + sin(clock * 30) * 0.25 if invulnerable > 0 else 1
 	queue_redraw()
 

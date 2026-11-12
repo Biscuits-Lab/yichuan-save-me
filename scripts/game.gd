@@ -34,6 +34,7 @@ var cleared_rooms: int = 0
 var relay_count: int = 0
 var boss_ref: Node
 var platforms: Array[Rect2] = []
+var gates: Array[Dictionary] = []
 var enemies: Array = []
 var coffee: Array = []
 var projectiles: Array = []
@@ -185,6 +186,7 @@ func build_room() -> void:
 			child.queue_free()
 	enemies.clear()
 	platforms.clear()
+	gates.clear()
 	coffee.clear()
 	projectiles.clear()
 	particles.clear()
@@ -215,6 +217,9 @@ func build_room() -> void:
 		add_solid(rect)
 	add_solid(Rect2(-30, 200, 30, 600))
 	add_solid(Rect2(world_length, 200, 30, 600))
+	for gate_x in room_data.gates:
+		var rect := Rect2(float(gate_x),-200,24,1000)
+		gates.append({"rect":rect,"body":add_solid(rect),"open":false})
 	npcs.append({"id":room_index % 4, "p":Vector2(295,600), "used":false})
 	npcs.append({"id":(room_index + 2) % 4, "p":Vector2(1900,480), "used":false})
 	coffee.append({"p":Vector2(1385,455), "taken":false})
@@ -242,6 +247,9 @@ func add_solid(rect: Rect2) -> StaticBody2D:
 	var collider := CollisionShape2D.new()
 	collider.shape = shape
 	collider.position = rect.get_center()
+	if rect.size.y <= 24:
+		collider.one_way_collision = true
+		collider.one_way_collision_margin = 5
 	body.add_child(collider)
 	body.collision_layer = 1
 	body.collision_mask = 0
@@ -293,13 +301,43 @@ func spawn_wave(index: int) -> void:
 
 func summon_boss() -> void:
 	room_phase = "boss"
-	boss_ref = spawn_bug(Vector2(2780,598),event.kind,true)
+	boss_ref = spawn_bug(room_data.boss_spawn,event.kind,true)
 	chapter_time = 0
 	feedback_time = 0
 	log_event("BOSS · " + event.boss + "：先看蓄力预警，再出刀。",event.color)
 	say("怀不上了" if event.kind == "boss" else "来了",2.5)
 	projectiles.clear()
-	burst(Vector2(2780,520),event.color,40)
+	burst(room_data.boss_spawn + Vector2(0,-78),event.color,40)
+
+func open_gate(index: int) -> void:
+	if index < 0 or index >= gates.size() or gates[index].open:
+		return
+	gates[index].open = true
+	if is_instance_valid(gates[index].body):
+		gates[index].body.queue_free()
+
+func objective_target() -> Dictionary:
+	if room_phase == "boss" and is_instance_valid(boss_ref) and not boss_ref.dead:
+		return {"p":boss_ref.position,"label":"关底 Boss","hint":"J 斩击 · K 破锁","color":Color("ec9c82")}
+	if room_phase == "combat" or room_phase == "boss":
+		var nearest: Node = null
+		var distance: float = INF
+		for bug in enemies:
+			if is_instance_valid(bug) and not bug.dead:
+				var current: float = player.position.distance_squared_to(bug.position)
+				if current < distance:
+					distance = current
+					nearest = bug
+		if nearest != null:
+			return {"p":nearest.position,"label":"关底 Boss" if nearest.is_boss else "剩余故障", "hint":"J 斩击 · K 破锁", "color":Color("ec9c82")}
+	if room_phase == "relay" and relay_count < room_data.relays.size():
+		return {"p":room_data.relays[relay_count].p,"label":"修复节点 %d" % (relay_count + 1),"hint":"跳上高台，按 E 重启","color":Color("b4e7bd")}
+	return {"p":Vector2(535,598),"label":"进入战区","hint":"向右前进，开始救场","color":event.color}
+
+func gate_hint(index: int) -> String:
+	if index == relay_count and room_phase == "relay":
+		return "修复上层节点 %d · 按 E" % (index + 1)
+	return "清理当前波次后修复节点 %d" % (index + 1)
 
 func _process(delta: float) -> void:
 	clock += delta
@@ -375,15 +413,29 @@ func update_effects(delta: float) -> void:
 func trap_phase(index: int) -> float:
 	return fmod(room_clock + index * 1.7,5.5)
 
+func trap_state(index: int) -> String:
+	if event.hazard == "cache":
+		return "safe"
+	if room_phase == "approach":
+		return "idle"
+	var phase: float = trap_phase(index)
+	if phase >= 3.8 and phase < 4.6:
+		return "active"
+	if phase >= 2.9 and phase < 3.8:
+		return "warning"
+	return "idle"
+
+func trap_area(index: int) -> Rect2:
+	return room_data.traps[index].grow_individual(0,65,0,0)
+
 func update_hazards(delta: float) -> void:
 	if room_phase == "approach":
 		return
 	for i in range(room_data.traps.size()):
 		var rect: Rect2 = room_data.traps[i]
-		var phase: float = trap_phase(i)
 		var cycle: int = int((room_clock + i * 1.7) / 5.5)
-		if phase >= 3.8 and phase < 4.6:
-			if rect.grow_individual(0,65,0,0).intersects(player.bounds()):
+		if trap_state(i) == "active":
+			if trap_area(i).intersects(player.bounds()):
 				if event.hazard == "vacuum":
 					player.energy = maxf(0,player.energy - 18 * delta)
 				elif event.hazard != "cache":
@@ -436,6 +488,7 @@ func interact() -> void:
 				feedback = "先清理当前波次，再按顺序重启节点。"
 			else:
 				relay.done = true
+				open_gate(i)
 				relay_count += 1
 				player.energy = minf(100,player.energy + 25)
 				burst(relay.p + Vector2(0,-40),Color("a7eec0"),25)

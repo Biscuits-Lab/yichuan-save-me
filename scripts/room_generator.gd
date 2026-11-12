@@ -14,7 +14,7 @@ static func generate(seed_value: int, floor_number: int, route: String) -> Dicti
 	var ledges: Array[Rect2] = [
 		Rect2(530, 490, 220, 22), Rect2(790, 380, 240, 22), Rect2(990, 480, 260, 22),
 		Rect2(1330, 490, 210, 22), Rect2(1570, 380, 240, 22), Rect2(1830, 480, 220, 22),
-		Rect2(2090, 480, 350, 22), Rect2(2500, 490, 190, 22), Rect2(2800, 390, 230, 22), Rect2(3100, 490, 200, 22)
+		Rect2(2090, 480, 350, 22), Rect2(2500, 490, 190, 22), Rect2(2800, 390, 230, 22), Rect2(3100, 420, 200, 22)
 	]
 	for i in range(ledges.size()):
 		# Change horizontal spacing and the secondary route without breaking reach.
@@ -35,6 +35,7 @@ static func generate(seed_value: int, floor_number: int, route: String) -> Dicti
 	if route == "elite":
 		traps.append(Rect2(1780, 580, 150, 20))
 	return {"name": LAYOUTS[layout], "layout": layout, "length": length, "platforms": platforms,
+		"gates": [1600.0, 2650.0], "boss_spawn": Vector2(3160,598),
 		"gaps": [Rect2(1020, 605, 160, 115), Rect2(2230, 605, 160, 115)],
 		"relays": [{"p": Vector2(910, relay_y), "done": false}, {"p": Vector2(2190, 480), "done": false}],
 		"traps": traps, "chest": Vector2(2900, 390), "spawn": Vector2(180, 598)}
