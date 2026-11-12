@@ -27,7 +27,7 @@ func _ready() -> void:
 	music.volume_db = -25
 	add_child(music)
 	music.stream = compose()
-	if DisplayServer.get_name() != "headless" and not "--no-music" in OS.get_cmdline_user_args():
+	if DisplayServer.get_name() != "headless" and not "--no-music" in OS.get_cmdline_user_args() and not "--no-audio" in OS.get_cmdline_user_args():
 		music.play()
 
 func tone(start: float, finish: float, duration: float) -> AudioStreamWAV:
@@ -46,7 +46,7 @@ func tone(start: float, finish: float, duration: float) -> AudioStreamWAV:
 	return stream
 
 func sfx(key: String) -> void:
-	if DisplayServer.get_name() == "headless":
+	if DisplayServer.get_name() == "headless" or "--no-audio" in OS.get_cmdline_user_args():
 		return
 	for player in players:
 		if not player.playing:

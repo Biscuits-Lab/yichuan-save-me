@@ -22,6 +22,9 @@ textures/default_filters/use_nearest_mipmap_filter=false
 textures/canvas_textures/default_texture_filter=0
 environment/defaults/default_clear_color=Color(0.035, 0.055, 0.09, 1)
 
+[physics]
+common/physics_interpolation=true
+
 [audio]
 driver/enable_input=false
 

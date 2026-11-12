@@ -52,6 +52,18 @@ func _init(source: Texture2D, cols: int, row_count: int, align_head: bool = fals
 		var common_heights: Array[float] = row_heights.duplicate()
 		common_heights.sort()
 		row_heights.fill(common_heights[common_heights.size() / 2])
+		if row_count == 4:
+			# A run/attack atlas is one animation, not four different characters.
+			# Lock its root to a single baseline instead of chasing each frame's head.
+			var xs: Array[float] = []
+			var ys: Array[float] = []
+			for frame in frames:
+				xs.append(frame.anchor.x)
+				ys.append(frame.anchor.y)
+			xs.sort()
+			ys.sort()
+			for frame in frames:
+				frame.anchor = Vector2(xs[xs.size() / 2], ys[ys.size() / 2])
 
 func draw(canvas: CanvasItem, index: int, point: Vector2, height: float, facing: float = 1, tint: Color = Color.WHITE, center_anchor: bool = false) -> void:
 	if frames.is_empty():

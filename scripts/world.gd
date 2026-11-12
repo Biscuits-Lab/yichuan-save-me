@@ -1,209 +1,137 @@
 extends Node2D
-
 var game: Node
-const INK := Color("102531")
-const MINT := Color("a1dac2")
-const PAPER := Color("f2dfb6")
+const PAPER := Color("e9debd")
 
 func _draw() -> void:
 	var cam: float = game.camera_x
-	var time: float = game.clock
-	var accent: Color = game.STAGES[game.stage].color
-	# Draw at world coordinates; the parent supplies camera movement.
-	draw_rect(Rect2(cam - 20, -20, 1320, 800), Color("0d1a2b"))
-	for i in range(38):
-		var sx: float = fposmod(i * 137.0 - cam * 0.09, 1380) + cam - 40
-		var sy: float = 45 + fmod(i * 71, 295)
-		draw_rect(Rect2(sx, sy, 2 if i % 3 else 3, 2), Color(0.6, 0.78, 0.72, 0.25 + sin(time + i) * 0.15))
-	var moon := Vector2(cam + 1050 - fmod(cam * 0.025, 140), 173)
-	draw_circle(moon, 75, Color("172f3c"))
-	draw_circle(moon, 61, Color("254850"))
-	draw_circle(moon, 54, Color("aacabc"))
-	draw_rect(Rect2(moon.x - 60, moon.y + 12, 140, 8), Color("17313e"))
-	draw_rect(Rect2(moon.x - 85, moon.y + 24, 150, 5), Color("17313e"))
-	# Layered, gently scrolling mountain silhouettes.
-	for layer in range(3):
-		var polygon := PackedVector2Array([Vector2(cam - 50, 720)])
-		for i in range(16):
-			var x: float = cam - 100 + i * 105
-			var y: float = 390 + layer * 66 - sin((x - cam * (0.82 - layer * 0.1)) * 0.008) * 60 - sin(x * 0.014) * 18
-			polygon.append(Vector2(x, y))
-		polygon.append(Vector2(cam + 1500, 720))
-		draw_colored_polygon(polygon, [Color("173243"), Color("193b49"), Color("1b414b")][layer])
-	# Distant server-temples.
-	for i in range(9):
-		var x: float = cam + fposmod(i * 208.0 - cam * 0.24, 1664) - 160
-		var height: float = 100 + fmod(i * 79, 180)
-		var base_y: float = 552
-		var tint := Color("204351")
-		draw_rect(Rect2(x, base_y - height, 87, height), tint)
-		for floor_index in range(3):
-			var roof_y: float = base_y - height + floor_index * 64
-			roof(x - 20, roof_y, 128, Color("1b3447"), Color("3d6467"))
-		for row in range(int(height / 22)):
-			for col in range(4):
-				if (row + col + i) % 3 != 0:
-					draw_rect(Rect2(x + 11 + col * 18, base_y - height + 22 + row * 22, 5, 9), Color("69968c") if (col + row) % 4 else Color("a88f65"))
-	# Midground power lines and server racks, with clear play-space silhouettes.
-	for i in range(8):
-		var x: float = cam + fposmod(i * 230.0 - cam * 0.5, 1840) - 180
-		var y: float = 388 + (i % 3) * 31
-		draw_rect(Rect2(x, y, 111, 215), Color("152e3a"))
-		draw_rect(Rect2(x + 6, y + 5, 99, 205), Color("213d46"))
-		for row in range(7):
-			var slot := Rect2(x + 13, y + 13 + row * 24, 85, 16)
-			draw_rect(slot, Color("102b36"))
-			draw_rect(Rect2(slot.position + Vector2(7, 6), Vector2(4, 4)), Color("72b39c"))
-			for vent in range(6):
-				draw_rect(Rect2(x + 42 + vent * 7, slot.position.y + 5, 3, 6), Color("35555b"))
-		roof(x - 15, y - 10, 142, Color("142c3b"), Color("466c70"))
-		var cable := PackedVector2Array()
-		for j in range(17):
-			cable.append(Vector2(x + j * 15, y - 22 + sin(j / 16.0 * PI) * 42))
-		draw_polyline(cable, Color("0c2330"), 4)
-		lantern(Vector2(x + 138, y + 17), time + i)
-	# A generated skyline supplies the final distant layer. Mirror the next tile
-	# at its edge so slow parallax never exposes an empty background.
+	var time: float = game.room_clock
+	var tint: Color = game.event.color
+	draw_rect(Rect2(cam - 30,-30,1340,800),Color("0b1a2b"))
 	if game.background_art:
-		var shift: float = fmod(cam * 0.12, 1280)
-		draw_texture_rect(game.background_art, Rect2(cam - shift, -130, 1280, 853), false, Color("c3cfce"))
-		draw_set_transform(Vector2(cam - shift + 2560, 0), 0, Vector2(-1, 1))
-		draw_texture_rect(game.background_art, Rect2(0, -130, 1280, 853), false, Color("c3cfce"))
+		var shift: float = fmod(cam * 0.12,1280)
+		draw_texture_rect(game.background_art,Rect2(cam - shift,-130,1280,853),false,Color("b7c5cb"))
+		draw_set_transform(Vector2(cam - shift + 2560,0),0,Vector2(-1,1))
+		draw_texture_rect(game.background_art,Rect2(0,-130,1280,853),false,Color("b7c5cb"))
 		draw_set_transform(Vector2.ZERO)
-		for i in range(16):
-			draw_rect(Rect2(cam, 440 + i * 12, 1280, 12), Color(0.025, 0.10, 0.14, i / 45.0))
-	# Landmark signage belongs to the current district, not the HUD.
-	for i in range(4):
-		var x: float = [240.0, 2070.0, 3700.0, 5410.0][i]
-		if absf(x - cam - 640) < 1100:
-			draw_rect(Rect2(x, 285, 216, 80), Color("172e3b"))
-			draw_rect(Rect2(x + 4, 289, 208, 72), Color("24434b"))
-			draw_rect(Rect2(x + 8, 293, 3, 64), game.STAGES[i].color)
-			draw_string(game.font, Vector2(x + 23, 318), game.STAGES[i].tool, HORIZONTAL_ALIGNMENT_LEFT, -1, 21, game.STAGES[i].color)
-			draw_string(game.font, Vector2(x + 23, 348), game.STAGES[i].title, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, PAPER)
-			draw_rect(Rect2(x + 22, 365, 5, 235), Color("304e53"))
-			draw_rect(Rect2(x + 189, 365, 5, 235), Color("304e53"))
-	# Torii at the beginning and between engineering districts.
-	for x in [110.0, 1850.0, 3480.0, 5030.0, 6300.0]:
-		if x > cam - 300 and x < cam + 1400:
-			draw_rect(Rect2(x + 16, 365, 13, 235), Color("7e4c49"))
-			draw_rect(Rect2(x + 163, 365, 13, 235), Color("7e4c49"))
-			draw_rect(Rect2(x + 20, 365, 4, 235), Color("b47d60"))
-			draw_rect(Rect2(x + 167, 365, 4, 235), Color("b47d60"))
-			draw_rect(Rect2(x + 2, 358, 190, 15), Color("a56351"))
-			draw_rect(Rect2(x + 10, 400, 176, 10), Color("905749"))
-			roof(x - 10, 341, 214, Color("203d43"), Color("839b89"))
-			lantern(Vector2(x + 97, 397), time)
-	# Falling into gaps is recoverable at the last successful build.
-	for hole in [Rect2(920, 605, 160, 115), Rect2(2580, 605, 150, 115), Rect2(4180, 605, 160, 115)]:
-		if hole.end.x < cam or hole.position.x > cam + 1280:
-			continue
-		draw_rect(hole, Color("102331"))
-		for i in range(8):
-			var y: float = hole.position.y + fposmod(i * 22.0 + time * 27, 115)
-			draw_rect(Rect2(hole.position.x + 7 + (i * 29) % 140, y, 17, 2), Color("b46065"))
-		draw_string(game.pixel_font, hole.position + Vector2(12, 45), "NULL", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("a16170"))
+	draw_rect(Rect2(cam,0,1280,627),Color(tint,0.035))
+	for i in range(15):
+		draw_rect(Rect2(cam,445 + i * 12,1280,12),Color(0.02,0.09,0.13,i / 42.0))
+	for gap in game.room_data.gaps:
+		draw_rect(gap,Color("102331"))
+		for i in range(5):
+			draw_rect(Rect2(gap.position + Vector2(12 + i * 29,fmod(time * 25 + i * 19,110)),Vector2(12,2)),Color("a26372"))
+		draw_string(game.pixel_font,gap.position + Vector2(20,40),"NULL",HORIZONTAL_ALIGNMENT_LEFT,-1,10,Color("ae7384"))
 	for rect in game.platforms:
-		if rect.end.x >= cam - 20 and rect.position.x < cam + 1300:
-			platform(rect, cam, accent)
-	for i in range(game.gates.size()):
-		var gate: Dictionary = game.gates[i]
-		var rect: Rect2 = gate.rect
-		if rect.position.x < cam - 100 or rect.position.x > cam + 1400:
-			continue
-		var tint: Color = game.STAGES[i].color
-		if not gate.open:
-			draw_rect(Rect2(rect.position - Vector2(7, 0), rect.size + Vector2(14, 0)), Color(tint, 0.12))
-			for j in range(12):
-				var y: float = rect.position.y + fposmod(j * 27.0 + time * 30, rect.size.y)
-				draw_rect(Rect2(rect.position.x, y, 28, 10), Color(tint, 0.7))
-			draw_rect(Rect2(rect.position.x - 7, rect.position.y, 42, 8), tint)
-			draw_rect(Rect2(rect.position.x - 7, 592, 42, 8), tint)
-	for i in range(game.terminals.size()):
-		var terminal: Dictionary = game.terminals[i]
-		if absf(terminal.p.x - cam - 640) < 900:
-			draw_terminal(terminal, i, time)
+		if rect.end.x > cam - 30 and rect.position.x < cam + 1310:
+			platform(rect,cam,tint)
+	# The hub and upper route are physical destinations, not decorative menu NPCs.
+	for x in [205.0,1830.0,3220.0]:
+		draw_rect(Rect2(x,336,11,264),Color("80564b"))
+		draw_rect(Rect2(x + 160,336,11,264),Color("80564b"))
+		draw_rect(Rect2(x - 10,331,192,13),Color("a7785c"))
+		draw_rect(Rect2(x - 20,323,210,8),Color("4c7272"))
+		lantern(Vector2(x + 85,350))
+	if cam < 800:
+		draw_rect(Rect2(495,245,260,83),Color("18343f"))
+		draw_rect(Rect2(495,245,4,83),tint)
+		draw_string(game.font,Vector2(515,278),game.event.tool,HORIZONTAL_ALIGNMENT_LEFT,-1,22,tint)
+		draw_string(game.font,Vector2(515,308),game.room_data.name,HORIZONTAL_ALIGNMENT_LEFT,-1,19,PAPER)
+	for i in range(game.room_data.traps.size()):
+		var rect: Rect2 = game.room_data.traps[i]
+		var phase: float = game.trap_phase(i)
+		draw_rect(rect,Color("263e46"))
+		for j in range(5):
+			draw_rect(Rect2(rect.position + Vector2(j * 29 + 8,5),Vector2(13,3)),Color("71877b"))
+		if phase > 2.9 and game.room_phase != "approach":
+			var active: bool = phase >= 3.8 and phase < 4.6
+			var warning: Color = Color("e8b883") if not active else tint
+			draw_rect(Rect2(rect.position + Vector2(0,-65),Vector2(rect.size.x,65)),Color(warning,0.16 if not active else 0.4))
+			for j in range(6):
+				draw_line(rect.position + Vector2(j * 28,-4),rect.position + Vector2(j * 28 + 15,-25 if not active else -60),Color(warning,0.8),2)
+	for hazard in game.hazards:
+		var color: Color = Color("f1b786") if hazard.delay > 0 else Color("ed8a79")
+		draw_rect(hazard.rect,Color(color,0.16 if hazard.delay > 0 else 0.55))
+		draw_rect(hazard.rect,color,false,2)
+	for i in range(game.room_data.relays.size()):
+		terminal(game.room_data.relays[i],i)
+	for npc in game.npcs:
+		var spec: Dictionary = game.Data.NPCS[npc.id]
+		if game.npc_atlas:
+			game.npc_atlas.draw(self,npc.id + (4 if int(game.clock * 0.6) % 2 else 0),npc.p,105)
+		else:
+			draw_rect(Rect2(npc.p + Vector2(-15,-80),Vector2(30,80)),spec.color)
+		draw_string(game.font,npc.p + Vector2(-31,-118),spec.name,HORIZONTAL_ALIGNMENT_LEFT,-1,18,spec.color)
+		if game.player.position.distance_to(npc.p) < 150:
+			draw_rect(Rect2(npc.p + Vector2(-40,-153),Vector2(100,25)),Color("142e37"))
+			draw_string(game.font,npc.p + Vector2(-31,-134),"E  交谈" if not npc.used else "E  再聊聊",HORIZONTAL_ALIGNMENT_LEFT,-1,14,PAPER)
+	var chest: Vector2 = game.room_data.chest
+	draw_rect(Rect2(chest + Vector2(-25,-36),Vector2(50,36)),Color("916742"))
+	draw_rect(Rect2(chest + Vector2(-28,-40),Vector2(56,12)),Color("c19c64"))
+	draw_rect(Rect2(chest + Vector2(-5,-28),Vector2(10,12)),Color("bbdbb0") if not game.chest_open else Color("4d615b"))
+	if not game.chest_open:
+		draw_string(game.font,chest + Vector2(-42,-59),"E 缓存宝箱",HORIZONTAL_ALIGNMENT_LEFT,-1,15,PAPER)
 	for cup in game.coffee:
-		if cup.taken or cup.p.x < cam - 100 or cup.p.x > cam + 1380:
-			continue
-		var p: Vector2 = cup.p + Vector2(0, sin(time * 3 + cup.p.x) * 4)
-		draw_circle(p, 22, Color(0.95, 0.75, 0.4, 0.05))
-		draw_rect(Rect2(p - Vector2(9, 12), Vector2(18, 22)), Color("f2d59e"))
-		draw_rect(Rect2(p + Vector2(-11, -14), Vector2(22, 4)), Color("a86c4d"))
-		draw_rect(Rect2(p + Vector2(-8, -4), Vector2(16, 8)), Color("b17e5a"))
-		draw_rect(Rect2(p + Vector2(9, -8), Vector2(6, 12)), Color("f2d59e"))
-		draw_line(p + Vector2(-3, -20), p + Vector2(-3 + sin(time * 3) * 3, -28), Color("b0c7ad"), 2)
-	for trail in game.trails:
-		draw_rect(Rect2(trail.p + Vector2(-20, -77), Vector2(40, 75)), Color(0.6, 0.95, 0.8, trail.life * 0.5))
+		if not cup.taken:
+			var p: Vector2 = cup.p + Vector2(0,sin(time * 3) * 3)
+			draw_rect(Rect2(p + Vector2(-9,-14),Vector2(18,24)),Color("edcf9d"))
+			draw_rect(Rect2(p + Vector2(-11,-16),Vector2(22,4)),Color("9d704f"))
+			draw_rect(Rect2(p + Vector2(8,-8),Vector2(7,12)),Color("edcf9d"))
+	for item in game.trails:
+		draw_rect(Rect2(item.p + Vector2(-20,-90),Vector2(40,85)),Color(0.6,0.95,0.8,item.life * 0.6))
+	for orb in game.projectiles:
+		if orb.friendly:
+			draw_line(orb.p - orb.v.normalized() * 10,orb.p + orb.v.normalized() * 10,orb.color,4)
+		else:
+			draw_circle(orb.p,10 if orb.delay > 0 else 8,Color(orb.color,0.18))
+			draw_rect(Rect2(orb.p - Vector2(5,5),Vector2(10,10)),Color(orb.color,0.45 if orb.delay > 0 else 1))
+			draw_rect(Rect2(orb.p - Vector2(2,2),Vector2(4,4)),Color("ffeac7"))
 	if game.effects_atlas:
 		for effect in game.effects:
 			var phase: float = 1 - effect.life / effect.duration
-			game.effects_atlas.draw(self, effect.index, effect.p, effect.size * (0.65 + phase * 0.6), effect.facing, Color(1, 1, 1, minf(1, effect.life * 7)), true)
-	for orb in game.projectiles:
-		draw_rect(Rect2(orb.p - Vector2(9, 9), Vector2(18, 18)), Color(orb.color, 0.14))
-		draw_rect(Rect2(orb.p - Vector2(5, 5), Vector2(10, 10)), orb.color)
-		draw_rect(Rect2(orb.p - Vector2(2, 2), Vector2(4, 4)), Color("ffe8c7"))
-	for particle in game.particles:
-		draw_rect(Rect2(particle.p, Vector2.ONE * particle.size), Color(particle.color, minf(1, particle.life * 3)))
+			game.effects_atlas.draw(self,effect.index,effect.p,effect.size * (0.65 + phase * 0.6),effect.facing,Color(1,1,1,minf(1,effect.life * 7)),true)
+	for item in game.particles:
+		draw_rect(Rect2(item.p,Vector2.ONE * item.size),Color(item.color,minf(1,item.life * 3)))
 	for item in game.floating_text:
-		var w: float = game.font.get_string_size(item.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
-		draw_string(game.font, item.p - Vector2(w * 0.5, 0), item.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 19, Color(item.color, minf(1, item.life * 2)))
-	# A few slow petals make the industrial environment feel alive.
-	for i in range(16):
-		var p := Vector2(cam + fposmod(i * 113.0 - time * (12 + i % 3) - cam * 0.3, 1360) - 40, fposmod(i * 61.0 + time * 14, 590))
-		draw_rect(Rect2(p, Vector2(4, 3)), Color(0.87, 0.64, 0.57, 0.42))
-
-func roof(x: float, y: float, width: float, fill: Color, edge: Color) -> void:
-	var points := PackedVector2Array([Vector2(x, y + 13), Vector2(x + 13, y + 10), Vector2(x + 25, y), Vector2(x + width - 25, y), Vector2(x + width - 13, y + 10), Vector2(x + width, y + 13), Vector2(x + width, y + 19), Vector2(x, y + 19)])
-	draw_colored_polygon(points, fill)
-	draw_line(Vector2(x, y + 14), Vector2(x + width, y + 14), edge, 3)
-	for i in range(int(width / 15)):
-		draw_rect(Rect2(x + 8 + i * 15, y + 15, 3, 3), edge)
-
-func lantern(p: Vector2, time: float) -> void:
-	draw_line(p - Vector2(0, 18), p, Color("756e59"), 2)
-	draw_circle(p + Vector2(0, 13), 24, Color(0.95, 0.55, 0.25, 0.035 + sin(time * 3) * 0.01))
-	draw_rect(Rect2(p + Vector2(-9, 0), Vector2(18, 25)), Color("b5754e"))
-	draw_rect(Rect2(p + Vector2(-6, 2), Vector2(12, 21)), Color("e8ba79"))
-	draw_rect(Rect2(p + Vector2(-10, -2), Vector2(20, 3)), Color("34383b"))
-	draw_rect(Rect2(p + Vector2(-10, 24), Vector2(20, 3)), Color("34383b"))
-	draw_rect(Rect2(p + Vector2(-1, 7), Vector2(2, 11)), Color("a46645"))
+		var width: float = game.font.get_string_size(item.text,HORIZONTAL_ALIGNMENT_LEFT,-1,17).x
+		draw_string(game.font,item.p - Vector2(width * 0.5,0),item.text,HORIZONTAL_ALIGNMENT_LEFT,-1,17,Color(item.color,minf(1,item.life * 2)))
+	for i in range(14):
+		var p := Vector2(cam + fposmod(i * 113.0 - game.clock * 15 - cam * 0.3,1360) - 40,fposmod(i * 61.0 + game.clock * 14,590))
+		draw_rect(Rect2(p,Vector2(4,3)),Color(tint,0.4))
 
 func platform(rect: Rect2, cam: float, accent: Color) -> void:
-	var ground: bool = rect.size.y > 50
-	draw_rect(rect, Color("182e38"))
-	draw_rect(Rect2(rect.position + Vector2(0, 5), Vector2(rect.size.x, 7)), Color("384d4e"))
-	draw_rect(Rect2(rect.position, Vector2(rect.size.x, 4)), Color("8da797"))
-	draw_rect(Rect2(rect.position + Vector2(0, 1), Vector2(rect.size.x, 1)), Color("bed3af"))
-	var start: int = maxi(0, int((cam - rect.position.x - 60) / 48))
-	var end: int = mini(int(rect.size.x / 48) + 1, int((cam + 1340 - rect.position.x) / 48))
-	for col in range(start, end):
+	draw_rect(rect,Color("182e38"))
+	draw_rect(Rect2(rect.position + Vector2(0,5),Vector2(rect.size.x,7)),Color("384d4e"))
+	draw_rect(Rect2(rect.position,Vector2(rect.size.x,4)),Color("8da797"))
+	draw_rect(Rect2(rect.position + Vector2(0,1),Vector2(rect.size.x,1)),Color("bed3af"))
+	var start: int = maxi(0,int((cam - rect.position.x - 60) / 48))
+	var end: int = mini(int(rect.size.x / 48) + 1,int((cam + 1340 - rect.position.x) / 48))
+	for col in range(start,end):
 		var x: float = rect.position.x + col * 48
-		draw_rect(Rect2(x + 3, rect.position.y + 7, 38, 4), Color("4a6060"))
-		if ground:
+		draw_rect(Rect2(x + 3,rect.position.y + 7,38,4),Color("4a6060"))
+		if rect.size.y > 50:
 			for row in range(3):
 				var y: float = rect.position.y + 22 + row * 39
-				draw_rect(Rect2(x + 4, y, 40, 30), Color("203842") if (col + row) % 3 else Color("243e46"))
-				draw_rect(Rect2(x + 9, y + 24, 12, 2), Color("344d50"))
+				draw_rect(Rect2(x + 4,y,40,30),Color("203842") if (col + row) % 3 else Color("243e46"))
 			if col % 5 == 0:
-				draw_line(Vector2(x + 20, rect.position.y + 18), Vector2(x + 20, rect.position.y + 86), Color("3f6665"), 2)
-				draw_line(Vector2(x + 20, rect.position.y + 86), Vector2(x + 42, rect.position.y + 86), Color("3f6665"), 2)
-				draw_rect(Rect2(x + 39, rect.position.y + 83, 5, 5), Color(accent, 0.6))
-		else:
-			draw_rect(Rect2(x + 11, rect.position.y + 14, 19, 4), Color("4f6d68"))
+				draw_rect(Rect2(x + 19,rect.position.y + 22,2,66),Color("3f6665"))
+				draw_rect(Rect2(x + 20,rect.position.y + 85,24,2),Color(accent,0.45))
 
-func draw_terminal(terminal: Dictionary, index: int, time: float) -> void:
-	var p: Vector2 = terminal.p
-	var tint: Color = Color("acdfb7") if terminal.done else game.STAGES[index].color
-	draw_rect(Rect2(p + Vector2(-24, -15), Vector2(48, 15)), Color("122b35"))
-	draw_rect(Rect2(p + Vector2(-8, -50), Vector2(16, 40)), Color("476466"))
-	draw_rect(Rect2(p + Vector2(-42, -108), Vector2(84, 63)), Color("122b35"))
-	draw_rect(Rect2(p + Vector2(-38, -104), Vector2(76, 54)), Color("536966"))
-	draw_rect(Rect2(p + Vector2(-32, -98), Vector2(64, 41)), Color("18393c"))
-	draw_rect(Rect2(p + Vector2(-30, -96), Vector2(60, 3)), tint)
-	draw_string(game.pixel_font, p + Vector2(-23, -72), "OK" if terminal.done else ">_", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, tint)
-	draw_rect(Rect2(p + Vector2(25, -43), Vector2(5, 5)), tint)
-	if absf(game.player.position.x - p.x) < 125 and not terminal.done:
-		var ready: bool = game.kills[game.STAGES[index].kind] >= 3 and game.stage == index
-		draw_rect(Rect2(p + Vector2(-61, -156), Vector2(122, 31)), Color("122b35"))
-		draw_string(game.font, p + Vector2(-50, -133), "E  修复工程" if ready else "E  查看问题", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("d7e9c5") if ready else tint)
+func lantern(p: Vector2) -> void:
+	draw_line(p - Vector2(0,14),p,Color("9a9678"),2)
+	draw_circle(p + Vector2(0,13),23,Color(0.95,0.6,0.3,0.06))
+	draw_rect(Rect2(p + Vector2(-9,0),Vector2(18,25)),Color("c88c59"))
+	draw_rect(Rect2(p + Vector2(-6,2),Vector2(12,21)),Color("edc383"))
+	draw_rect(Rect2(p + Vector2(-10,-2),Vector2(20,3)),Color("34383b"))
+	draw_rect(Rect2(p + Vector2(-10,24),Vector2(20,3)),Color("34383b"))
+
+func terminal(relay: Dictionary, index: int) -> void:
+	var p: Vector2 = relay.p
+	var ready: bool = game.room_phase == "relay" and game.relay_count == index
+	var tint: Color = Color("afe6b7") if relay.done else (game.event.color if ready else Color("627d82"))
+	draw_rect(Rect2(p + Vector2(-7,-43),Vector2(14,43)),Color("49656a"))
+	draw_rect(Rect2(p + Vector2(-29,-83),Vector2(58,43)),Color("607c76"))
+	draw_rect(Rect2(p + Vector2(-25,-79),Vector2(50,34)),Color("17323c"))
+	draw_string(game.pixel_font,p + Vector2(-18,-57),"OK" if relay.done else str(index + 1),HORIZONTAL_ALIGNMENT_LEFT,-1,13,tint)
+	if ready:
+		draw_circle(p + Vector2(0,-63),41,Color(tint,0.07 + sin(game.clock * 3) * 0.02))
+		draw_string(game.font,p + Vector2(-56,-105),"E 重启节点 " + str(index + 1),HORIZONTAL_ALIGNMENT_LEFT,-1,16,tint)

@@ -1,172 +1,245 @@
 extends Node2D
 
-const SamuraiScript = preload("res://scripts/samurai.gd")
+const Data = preload("res://scripts/rogue_data.gd")
+const Rooms = preload("res://scripts/room_generator.gd")
+const PlayerScript = preload("res://scripts/samurai.gd")
 const BugScript = preload("res://scripts/bug.gd")
 const WorldScript = preload("res://scripts/world.gd")
 const HudScript = preload("res://scripts/hud.gd")
 const AudioScript = preload("res://scripts/audio.gd")
 const AtlasScript = preload("res://scripts/sprite_atlas.gd")
-const WORLD_LENGTH: float = 6480
-const STAGES: Array[Dictionary] = [
-	{"tool": "UGS", "title": "同步风暴", "task": "斩断 3 个同步冲突，在终端重新同步", "kind": "ugs", "color": Color("e6ad74"), "x": 1500.0, "gate": 1770.0, "log": "UGS: Workspace synced. Build is healthy."},
-	{"tool": "AngelScript", "title": "脚本迷城", "task": "清除 3 个编译幽灵，在终端热重载", "kind": "script", "color": Color("bcaae3"), "x": 3150.0, "gate": 3400.0, "log": "AngelScript: Compile succeeded. Hot reload complete."},
-	{"tool": "P4", "title": "独占检出", "task": "用 K 破除 3 把文件锁，在终端提交", "kind": "p4", "color": Color("81c9d6"), "x": 4700.0, "gate": 4950.0, "log": "P4: Change 1024 submitted. All files unlocked."},
-	{"tool": "BUILD", "title": "最后一次打包", "task": "击败打包失败，守住今晚的下班时间", "kind": "boss", "color": Color("ed8d82"), "x": 6200.0, "gate": 6480.0, "log": "AutomationTool exiting with ExitCode=0 (Success)"}
-]
-
+const STORY_ROOMS: int = 12
 var state: String = "title"
 var previous_state: String = "title"
+var mode: String = "story"
 var world: Node2D
 var scenery: Node2D
 var hud: Node2D
 var player: CharacterBody2D
 var audio: Node
-var world_length: float = WORLD_LENGTH
+var world_length: float = 3520
 var camera_x: float = 0
 var stage: int = 0
-var checkpoint := Vector2(180, 598)
-var enemies: Array = []
+var room_index: int = 0
+var room_data: Dictionary = {}
+var event: Dictionary = Data.EVENTS[0]
+var event_order: Array[int] = []
+var room_phase: String = "approach"
+var route: String = "normal"
+var run_seed: int = 0
+var room_clock: float = 0
+var room_wave: int = 0
+var room_kills: int = 0
+var cleared_rooms: int = 0
+var relay_count: int = 0
+var boss_ref: Node
 var platforms: Array[Rect2] = []
-var gates: Array = []
-var terminals: Array = []
+var enemies: Array = []
 var coffee: Array = []
 var projectiles: Array = []
 var particles: Array = []
 var floating_text: Array = []
 var trails: Array = []
+var effects: Array = []
+var hazards: Array = []
+var npcs: Array = []
 var logs: Array = []
-var kills: Dictionary = {"ugs": 0, "script": 0, "p4": 0, "boss": 0}
+var skill_ranks: Dictionary = {}
+var upgrade_choices: Array[Dictionary] = []
+var coins: int = 0
+var score: int = 0
+var total_kills: int = 0
+var bonus_damage: int = 0
+var ward: int = 0
+var npc_contract: bool = false
+var npc_selected: int = -1
+var chest_open: bool = false
+var trap_cycles: Dictionary = {}
 var clock: float = 0
 var run_time: float = 0
 var best_time: float = 0
-var deaths: int = 0
-var repaired: int = 0
+var best_floor: int = 0
+var best_score: int = 0
 var shake: float = 0
 var damage_flash: float = 0
 var speech: String = "来了"
 var speaker: String = "毅川 / 虚幻引擎开发师"
 var speech_time: float = 0
+var speech_anchor: Vector2 = Vector2.INF
 var chapter_time: float = 0
 var feedback: String = ""
 var feedback_time: float = 0
 var selection: int = 0
+var card_selection: int = 0
 var rng := RandomNumberGenerator.new()
 var font: Font
 var pixel_font: Font
+var display_font: Font
+var speech_font: Font
 var key_art: Texture2D
 var background_art: Texture2D
 var actions_atlas: RefCounted
 var run_atlas: RefCounted
 var attack_atlas: RefCounted
 var enemies_atlas: RefCounted
+var extra_enemies_atlas: RefCounted
 var effects_atlas: RefCounted
-var effects: Array = []
-var display_font: Font
-var speech_font: Font
+var npc_atlas: RefCounted
+var icons_atlas: RefCounted
 var muted: bool = false
 var record_path: String = "user://record.json"
 
 func _ready() -> void:
-	rng.seed = 20261112
-	var base_font: Font = load("res://assets/fonts/NotoSansSC.ttf") if ResourceLoader.exists("res://assets/fonts/NotoSansSC.ttf") else ThemeDB.fallback_font
-	var body_font := FontVariation.new()
-	body_font.base_font = base_font
-	body_font.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): 550.0}
-	font = body_font
-	var title_font := FontVariation.new()
-	title_font.base_font = base_font
-	title_font.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): 850.0}
-	display_font = title_font
-	var bubble_font := FontVariation.new()
-	bubble_font.base_font = base_font
-	bubble_font.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): 780.0}
-	speech_font = bubble_font
-	pixel_font = load("res://assets/fonts/PressStart2P.ttf") if ResourceLoader.exists("res://assets/fonts/PressStart2P.ttf") else ThemeDB.fallback_font
-	if ResourceLoader.exists("res://assets/art/key-art.png"):
-		key_art = load("res://assets/art/key-art.png")
-	if ResourceLoader.exists("res://assets/art/district-background.png"):
-		background_art = load("res://assets/art/district-background.png")
+	var base: Font = load("res://assets/fonts/NotoSansSC.ttf")
+	font = make_font(base, 550)
+	display_font = make_font(base, 850)
+	speech_font = make_font(base, 780)
+	pixel_font = load("res://assets/fonts/PressStart2P.ttf")
+	key_art = load("res://assets/art/key-art.png")
+	background_art = load("res://assets/art/district-background.png")
 	actions_atlas = load_atlas("res://assets/sprites/yichuan-actions.png", 4, 2, true)
 	run_atlas = load_atlas("res://assets/sprites/yichuan-run-v2.png", 4, 4, true)
 	attack_atlas = load_atlas("res://assets/sprites/yichuan-attack.png", 4, 4, true)
 	enemies_atlas = load_atlas("res://assets/sprites/engine-enemies.png", 4, 4)
+	extra_enemies_atlas = load_atlas("res://assets/sprites/engine-enemies-expanded.png", 4, 4)
 	effects_atlas = load_atlas("res://assets/vfx/combat-effects.png", 4, 2)
+	npc_atlas = load_atlas("res://assets/sprites/developer-npcs.png", 4, 2)
+	icons_atlas = load_atlas("res://assets/ui/skill-icons.png", 4, 3)
 	setup_input()
 	audio = AudioScript.new()
 	add_child(audio)
 	world = Node2D.new()
+	world.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	add_child(world)
-	build_world()
+	player = PlayerScript.new()
+	player.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
+	player.game = self
+	world.add_child(player)
 	hud = HudScript.new()
 	hud.game = self
+	hud.z_index = 100
 	add_child(hud)
 	world.visible = false
 	load_record()
 	if "--smoke-play" in OS.get_cmdline_user_args():
 		start_run()
 
-func load_atlas(path: String, columns: int, rows: int, align_head: bool = false) -> RefCounted:
-	return AtlasScript.new(load(path), columns, rows, align_head) if ResourceLoader.exists(path) else null
+func make_font(base: Font, weight: int) -> Font:
+	var result := FontVariation.new()
+	result.base_font = base
+	result.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): weight}
+	return result
+
+func load_atlas(path: String, columns: int, rows: int, hero: bool = false) -> RefCounted:
+	return AtlasScript.new(load(path), columns, rows, hero) if ResourceLoader.exists(path) else null
 
 func setup_input() -> void:
-	var bindings: Dictionary = {
-		"move_left": [KEY_A, KEY_LEFT], "move_right": [KEY_D, KEY_RIGHT],
-		"jump": [KEY_SPACE, KEY_W, KEY_UP], "attack": [KEY_J, KEY_X],
-		"skill": [KEY_K, KEY_C], "dash": [KEY_L, KEY_SHIFT], "interact": [KEY_E]
-	}
+	var bindings: Dictionary = {"move_left":[KEY_A,KEY_LEFT], "move_right":[KEY_D,KEY_RIGHT], "jump":[KEY_SPACE,KEY_W,KEY_UP],
+		"attack":[KEY_J,KEY_X], "skill":[KEY_K,KEY_C], "dash":[KEY_L,KEY_SHIFT], "interact":[KEY_E], "swords":[KEY_U], "shield":[KEY_I]}
 	for action in bindings:
-		if not InputMap.has_action(action):
+		if InputMap.has_action(action):
+			InputMap.action_erase_events(action)
+		else:
 			InputMap.add_action(action)
 		for key in bindings[action]:
-			var event := InputEventKey.new()
-			event.physical_keycode = key
-			InputMap.action_add_event(action, event)
+			var key_event := InputEventKey.new()
+			key_event.physical_keycode = key
+			InputMap.action_add_event(action, key_event)
 
-func build_world() -> void:
+func start_run(selected_mode: String = "", seed_value: int = 0) -> void:
+	if not selected_mode.is_empty():
+		mode = selected_mode
+	rng.randomize()
+	run_seed = seed_value if seed_value != 0 else rng.randi_range(1, 999999)
+	rng.seed = run_seed
+	event_order.assign([0,1,2,3,4,5,6,7,8,9,10,11])
+	for group in range(4):
+		var at: int = group * 3 + (0 if group > 0 else 1)
+		if at + 1 < 11 and rng.randf() > 0.5:
+			var saved: int = event_order[at]
+			event_order[at] = event_order[at + 1]
+			event_order[at + 1] = saved
+	room_index = 0
+	cleared_rooms = 0
+	run_time = 0
+	score = 0
+	coins = 0
+	total_kills = 0
+	bonus_damage = 0
+	ward = 0
+	skill_ranks.clear()
+	upgrade_choices.clear()
+	player.health = max_health()
+	player.energy = 100
+	route = "normal"
+	logs.clear()
+	build_room()
+	log_event("同事：毅川救我！今天的工单有点多。", Color("e6bb85"))
+	say("来了", 3)
+	audio.sfx("start")
+
+func build_room() -> void:
+	state = "loading"
 	for child in world.get_children():
-		child.queue_free()
+		if child != player:
+			child.queue_free()
 	enemies.clear()
 	platforms.clear()
-	gates.clear()
-	terminals.clear()
 	coffee.clear()
 	projectiles.clear()
 	particles.clear()
 	effects.clear()
 	trails.clear()
 	floating_text.clear()
+	hazards.clear()
+	trap_cycles.clear()
+	npcs.clear()
+	boss_ref = null
+	stage = (room_index / 3) % 4
+	event = Data.EVENTS[event_order[room_index % event_order.size()]]
+	room_data = Rooms.generate(run_seed, room_index, route)
+	world_length = room_data.length
+	room_phase = "approach"
+	room_clock = 0
+	room_kills = 0
+	room_wave = 0
+	relay_count = 0
+	npc_contract = false
+	chest_open = false
 	scenery = WorldScript.new()
 	scenery.game = self
+	scenery.z_index = -10
 	world.add_child(scenery)
-	var ground: Array[Rect2] = [Rect2(0, 600, 920, 170), Rect2(1080, 600, 1500, 170), Rect2(2730, 600, 1450, 170), Rect2(4340, 600, 2140, 170)]
-	var ledges: Array[Rect2] = [
-		Rect2(400, 465, 210, 24), Rect2(740, 420, 200, 24), Rect2(1000, 475, 200, 24),
-		Rect2(1990, 480, 180, 24), Rect2(2300, 400, 220, 24), Rect2(2550, 480, 200, 24), Rect2(2900, 445, 180, 24),
-		Rect2(3590, 475, 190, 24), Rect2(3920, 415, 190, 24), Rect2(4160, 480, 220, 24), Rect2(4510, 455, 160, 24),
-		Rect2(5360, 455, 150, 24), Rect2(5830, 455, 150, 24)
-	]
-	for rect in ground + ledges:
+	for rect in room_data.platforms:
 		platforms.append(rect)
 		add_solid(rect)
-	for i in range(3):
-		var data: Dictionary = STAGES[i]
-		var gate_rect := Rect2(float(data.gate), 295, 28, 305)
-		gates.append({"rect": gate_rect, "body": add_solid(gate_rect), "open": false})
-		terminals.append({"p": Vector2(float(data.x), 600), "done": false, "tool": data.tool})
-	for spec in [[530, 600, "ugs"], [1220, 600, "ugs"], [1450, 600, "ugs"], [2200, 480, "script"], [2780, 505, "script"], [3040, 420, "script"], [3730, 600, "p4"], [4000, 600, "p4"], [4540, 600, "p4"], [5730, 600, "boss"]]:
-		spawn_bug(Vector2(spec[0], spec[1]), spec[2])
-	for point in [Vector2(820, 386), Vector2(2080, 446), Vector2(2965, 411), Vector2(3660, 441), Vector2(4600, 421), Vector2(5430, 421)]:
-		coffee.append({"p": point, "taken": false})
-	player = SamuraiScript.new()
-	player.game = self
-	player.position = Vector2(180, 598)
-	world.add_child(player)
+	add_solid(Rect2(-30, 200, 30, 600))
+	add_solid(Rect2(world_length, 200, 30, 600))
+	npcs.append({"id":room_index % 4, "p":Vector2(295,600), "used":false})
+	npcs.append({"id":(room_index + 2) % 4, "p":Vector2(1900,480), "used":false})
+	coffee.append({"p":Vector2(1385,455), "taken":false})
+	player.position = room_data.spawn
+	player.velocity = Vector2.ZERO
+	player.reset_motion()
+	player.reset_physics_interpolation()
+	if route == "supply":
+		player.health = mini(max_health(), player.health + 2)
+	player.energy = minf(100, player.energy + 35)
+	player.invulnerable = 0.5
+	camera_x = 0
+	world.position = Vector2.ZERO
+	world.visible = true
+	chapter_time = 3.5
+	speech_time = 0
+	feedback_time = 0
+	state = "playing"
+	log_event("%02d · %s / %s" % [room_index + 1,event.tool,event.title], event.color)
 
 func add_solid(rect: Rect2) -> StaticBody2D:
 	var body := StaticBody2D.new()
-	var collider := CollisionShape2D.new()
 	var shape := RectangleShape2D.new()
 	shape.size = rect.size
+	var collider := CollisionShape2D.new()
 	collider.shape = shape
 	collider.position = rect.get_center()
 	body.add_child(collider)
@@ -175,289 +248,507 @@ func add_solid(rect: Rect2) -> StaticBody2D:
 	world.add_child(body)
 	return body
 
-func spawn_bug(point: Vector2, kind: String) -> CharacterBody2D:
+func rank(id: String) -> int:
+	return int(skill_ranks.get(id,0))
+
+func max_health() -> int:
+	return 8 + rank("health") * 2
+
+func cooldown_scale() -> float:
+	return 1.0 - rank("cooldown") * 0.12
+
+func melee_damage() -> int:
+	return 1 + rank("blade") + rank("overclock") + bonus_damage
+
+func spawn_bug(point: Vector2, kind: String, boss: bool = false, depth: int = 0) -> CharacterBody2D:
 	var bug := BugScript.new()
 	bug.position = point
+	bug.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	bug.kind = kind
+	bug.is_boss = boss
+	bug.spawn_depth = depth
 	bug.game = self
 	enemies.append(bug)
 	world.add_child(bug)
 	return bug
 
-func start_run() -> void:
-	stage = 0
-	run_time = 0
-	deaths = 0
-	repaired = 0
-	kills = {"ugs": 0, "script": 0, "p4": 0, "boss": 0}
-	checkpoint = Vector2(180, 598)
-	build_world()
-	state = "playing"
-	world.visible = true
-	camera_x = 0
-	chapter_time = 4
-	logs.clear()
-	log_event("[22:47] 同事：毅川救我！工程又炸了。", Color("e6bb85"))
-	log_event("UGS: Sync failed. 3 workspace conflicts detected.", Color("e5ad76"))
-	say("来了", 3.5)
-	audio.sfx("start")
+func enemy_health(boss: bool) -> int:
+	var amount: int = 26 + room_index * 6 if boss else 3 + room_index / 3
+	return ceili(amount * (1.3 if route == "elite" else 1.0))
+
+func spawn_wave(index: int) -> void:
+	room_wave = index
+	room_phase = "combat"
+	var count: int = mini(10,4 + room_index / 4 + (2 if route == "elite" else 0) + (2 if npc_contract and index == 1 else 0))
+	var mixed: Array[String] = [event.kind,"ugs","script","p4","shader","nanite","lumen","ddc","gc","leak","live","net"]
+	for i in range(count):
+		var kind: String = event.kind if i % 2 == 0 else mixed[rng.randi_range(1,mixed.size() - 1)]
+		var x: float = (650 if index == 0 else 1640) + i * (800.0 / maxf(1,count - 1))
+		if (x > 990 and x < 1210) or (x > 2200 and x < 2420):
+			x = 1240 if index == 0 else 2450
+		spawn_bug(Vector2(x,465 if kind in ["script","net","lumen","nanite"] else 598),kind)
+	feedback = "第 %d / 2 波 · 清理故障后修复发光节点" % (index + 1)
+	feedback_time = 3
+	audio.sfx("select")
+
+func summon_boss() -> void:
+	room_phase = "boss"
+	boss_ref = spawn_bug(Vector2(2780,598),event.kind,true)
+	chapter_time = 0
+	feedback_time = 0
+	log_event("BOSS · " + event.boss + "：先看蓄力预警，再出刀。",event.color)
+	say("怀不上了" if event.kind == "boss" else "来了",2.5)
+	projectiles.clear()
+	burst(Vector2(2780,520),event.color,40)
 
 func _process(delta: float) -> void:
 	clock += delta
 	if state == "playing":
 		run_time += delta
-		speech_time = maxf(0, speech_time - delta)
-		chapter_time = maxf(0, chapter_time - delta)
-		feedback_time = maxf(0, feedback_time - delta)
-		shake = maxf(0, shake - delta * 35)
-		damage_flash = maxf(0, damage_flash - delta)
-		var wanted: float = clampf(player.position.x - 440, 0, WORLD_LENGTH - 1280)
-		camera_x = lerpf(camera_x, wanted, 1.0 - exp(-delta * 7))
-		var offset := Vector2(rng.randf_range(-shake, shake), rng.randf_range(-shake * 0.5, shake * 0.5))
-		world.position = Vector2(-floorf(camera_x), 0) + offset
+		room_clock += delta
+		speech_time = maxf(0,speech_time - delta)
+		chapter_time = maxf(0,chapter_time - delta)
+		feedback_time = maxf(0,feedback_time - delta)
+		shake = maxf(0,shake - delta * 38)
+		damage_flash = maxf(0,damage_flash - delta)
+		camera_x = lerpf(camera_x,clampf(player.position.x - 440,0,world_length - 1280),1 - exp(-delta * 8))
+		world.position = Vector2(-camera_x + sin(clock * 133) * shake,cos(clock * 97) * shake * 0.45)
 		update_effects(delta)
-		enemies = enemies.filter(func(enemy): return is_instance_valid(enemy) and not enemy.dead)
+		update_hazards(delta)
+		enemies = enemies.filter(func(bug): return is_instance_valid(bug) and not bug.dead)
+		if room_phase == "approach" and player.position.x > 510:
+			spawn_wave(0)
+		elif room_phase == "combat" and enemies.is_empty():
+			room_phase = "relay"
+			feedback = "故障已清空：跳到发光节点，按 E 修复。"
+			feedback_time = 4
 		for cup in coffee:
-			if not cup.taken and player.position.distance_to(cup.p + Vector2(0, 25)) < 60:
+			if not cup.taken and player.position.distance_to(cup.p + Vector2(0,25)) < 55:
 				cup.taken = true
-				player.health = mini(6, player.health + 2)
-				player.energy = minf(100, player.energy + 30)
-				burst(cup.p, Color("edc78d"), 15)
-				float_text("咖啡续命 +2", cup.p, Color("ffe4b5"))
+				player.health = mini(max_health(),player.health + 2)
+				player.energy = minf(100,player.energy + 30)
+				vfx(7,cup.p,80,0.4)
 				audio.sfx("coffee")
 		if Input.is_action_just_pressed("interact"):
 			interact()
 	if is_instance_valid(scenery):
 		scenery.queue_redraw()
-	if is_instance_valid(hud):
-		hud.queue_redraw()
+	hud.queue_redraw()
 
 func update_effects(delta: float) -> void:
-	for particle in particles:
-		particle.life -= delta
-		particle.p += particle.v * delta
-		particle.v.y += 430 * delta
+	for item in particles:
+		item.life -= delta
+		item.p += item.v * delta
+		item.v.y += 430 * delta
 	particles = particles.filter(func(p): return p.life > 0)
-	for effect in effects:
-		effect.life -= delta
-	effects = effects.filter(func(effect): return effect.life > 0)
-	for trail in trails:
-		trail.life -= delta
-	trails = trails.filter(func(t): return t.life > 0)
+	for item in effects:
+		item.life -= delta
+	effects = effects.filter(func(p): return p.life > 0)
+	for item in trails:
+		item.life -= delta
+	trails = trails.filter(func(p): return p.life > 0)
 	for item in floating_text:
 		item.life -= delta
 		item.p.y -= 26 * delta
-	floating_text = floating_text.filter(func(t): return t.life > 0)
-	for orb in projectiles:
+	floating_text = floating_text.filter(func(p): return p.life > 0)
+	for orb in projectiles.duplicate():
 		orb.life -= delta
+		if orb.delay > 0:
+			orb.delay -= delta
+			continue
+		if orb.friendly and is_instance_valid(orb.target) and not orb.target.dead:
+			orb.v = (orb.target.position + Vector2(0,-35) - orb.p).normalized() * 520
 		orb.p += orb.v * delta
 		if orb.life <= 0:
 			continue
-		if orb.p.distance_to(player.position + Vector2(0, -35)) < 24:
-			player.hurt(1, orb.p.x)
+		if orb.friendly:
+			for bug in enemies.duplicate():
+				if is_instance_valid(bug) and not bug.dead and bug.get_bounds().grow(7).has_point(orb.p):
+					bug.take_hit(orb.damage,signf(orb.v.x),true)
+					orb.life = 0
+					break
+		elif orb.p.distance_to(player.position + Vector2(0,-35)) < 23:
+			player.hurt(1,orb.p.x)
 			orb.life = 0
-		for rect in platforms:
-			if rect.has_point(orb.p):
-				orb.life = 0
-				break
-	projectiles = projectiles.filter(func(p): return p.life > 0)
+	projectiles = projectiles.filter(func(p): return p.life > 0 and p.p.x > -100 and p.p.x < world_length + 100 and p.p.y > -200 and p.p.y < 850)
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		match event.keycode:
-			KEY_M:
-				muted = not muted
-				AudioServer.set_bus_mute(0, muted)
-			KEY_F11:
-				var mode := DisplayServer.window_get_mode()
-				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if mode == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
-			KEY_F1, KEY_TAB:
-				if state == "guide":
-					state = previous_state
-				else:
-					previous_state = state
-					state = "guide"
-			KEY_ESCAPE:
-				if state == "playing":
-					state = "paused"
-				elif state == "paused":
-					state = "playing"
-				elif state == "guide":
-					state = previous_state
-			KEY_R:
-				if state == "dead":
-					respawn()
-				elif state == "won":
-					start_run()
-			KEY_UP, KEY_DOWN:
-				if state == "title":
-					selection = 1 - selection
-					audio.sfx("select")
-			KEY_ENTER, KEY_KP_ENTER:
-				if state == "title":
-					if selection == 0:
-						start_run()
-					else:
-						previous_state = "title"
-						state = "guide"
-				elif state == "paused":
-					state = "playing"
-				elif state == "dead":
-					respawn()
-				elif state == "won":
-					start_run()
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		handle_click(get_global_mouse_position())
+func trap_phase(index: int) -> float:
+	return fmod(room_clock + index * 1.7,5.5)
 
-func handle_click(point: Vector2) -> void:
-	if state == "title":
-		if Rect2(96, 438, 310, 64).has_point(point):
-			start_run()
-		elif Rect2(96, 516, 310, 54).has_point(point):
-			previous_state = "title"
-			state = "guide"
-	elif state == "guide":
-		if Rect2(1000, 65, 150, 44).has_point(point):
-			state = previous_state
-	elif state in ["dead", "won", "paused"]:
-		if Rect2(470, 440, 340, 60).has_point(point):
-			if state == "dead":
-				respawn()
-			elif state == "won":
-				start_run()
-			else:
-				state = "playing"
-		elif Rect2(470, 518, 340, 48).has_point(point):
-			state = "title"
-			world.visible = false
-	else:
-		if Rect2(1180, 23, 64, 46).has_point(point):
-			state = "paused"
+func update_hazards(delta: float) -> void:
+	if room_phase == "approach":
+		return
+	for i in range(room_data.traps.size()):
+		var rect: Rect2 = room_data.traps[i]
+		var phase: float = trap_phase(i)
+		var cycle: int = int((room_clock + i * 1.7) / 5.5)
+		if phase >= 3.8 and phase < 4.6:
+			if rect.grow_individual(0,65,0,0).intersects(player.bounds()):
+				if event.hazard == "vacuum":
+					player.energy = maxf(0,player.energy - 18 * delta)
+				elif event.hazard != "cache":
+					player.hurt(1,rect.get_center().x)
+			if int(trap_cycles.get(i,-1)) != cycle and absf(rect.position.x - player.position.x) < 850:
+				trap_cycles[i] = cycle
+				if event.hazard in ["light","delayed","pulse"]:
+					var p: Vector2 = rect.get_center() + Vector2(0,-35)
+					var direction: Vector2 = (player.position + Vector2(0,-40) - p).normalized()
+					shoot(p,direction * 180,event.color,0.75 if event.hazard == "delayed" else 0)
+	for hazard in hazards:
+		hazard.delay -= delta
+		if hazard.delay <= 0:
+			hazard.life -= delta
+			if hazard.rect.intersects(player.bounds()):
+				player.hurt(1,hazard.rect.get_center().x)
+	hazards = hazards.filter(func(h): return h.life > 0)
+
+func ground_support(point: Vector2) -> bool:
+	for rect in platforms:
+		if rect.has_point(point):
+			return true
+	return false
 
 func interact() -> void:
-	for i in range(terminals.size()):
-		var terminal: Dictionary = terminals[i]
-		if absf(player.position.x - terminal.p.x) > 115 or absf(player.position.y - terminal.p.y) > 100:
-			continue
-		if terminal.done:
-			feedback = "工程状态正常。往前走，大家还等着你。"
-			feedback_time = 3
+	for i in range(npcs.size()):
+		if player.position.distance_to(npcs[i].p) < 110:
+			npc_selected = i
+			state = "npc"
+			card_selection = 0
 			return
-		if stage != i:
-			feedback = "先修复前一个工具，再继续流水线。"
-			feedback_time = 3
-			return
-		var data: Dictionary = STAGES[i]
-		if kills[data.kind] < 3:
-			feedback = "%s：还有 %d 个问题没有修复。" % [data.tool, 3 - kills[data.kind]]
-			feedback_time = 3
-			say("坏啦", 2)
-			return
-		terminal.done = true
-		gates[i].open = true
-		gates[i].body.queue_free()
-		stage += 1
-		repaired += 1
-		checkpoint = Vector2(float(data.gate) + 95, 598)
-		player.health = 6
-		player.energy = 100
-		chapter_time = 4
-		log_event(data.log, Color("b2e4bd"))
-		if stage == 1:
-			log_event("AngelScript: 3 errors. Script module not loaded.", Color("bcaae3"))
-		elif stage == 2:
-			log_event("P4: Can't edit exclusive file. Already opened by someone.", Color("81c9d6"))
+	if not chest_open and player.position.distance_to(room_data.chest) < 110:
+		chest_open = true
+		coins += 14
+		player.energy = minf(100,player.energy + 30)
+		vfx(7,room_data.chest + Vector2(0,-25),100,0.5)
+		if event.hazard == "cache":
+			spawn_bug(room_data.chest + Vector2(-80,-25),"ddc")
+			spawn_bug(Vector2(3040,598),"ddc")
+			say("坏啦",2,"毅川 · 缓存箱活过来了")
 		else:
-			log_event("UAT: Cook failed. Unknown Error. 下班倒计时暂停。", Color("ed8d82"))
-		say("来了", 2.2, "毅川 · 下一个问题")
-		burst(terminal.p + Vector2(0, -60), Color("a5f5c3"), 45)
-		audio.sfx("repair")
+			float_text("+14 工单 · 能量补给",room_data.chest + Vector2(0,-70),Color("eed09a"))
 		return
-	feedback = "靠近发光的工具终端，按 E 修复工程。"
+	for i in range(room_data.relays.size()):
+		var relay: Dictionary = room_data.relays[i]
+		if player.position.distance_to(relay.p) < 110:
+			if relay.done:
+				feedback = "这个节点已经恢复。"
+			elif room_phase != "relay" or i != relay_count:
+				feedback = "先清理当前波次，再按顺序重启节点。"
+			else:
+				relay.done = true
+				relay_count += 1
+				player.energy = minf(100,player.energy + 25)
+				burst(relay.p + Vector2(0,-40),Color("a7eec0"),25)
+				audio.sfx("repair")
+				if relay_count == 1:
+					spawn_wave(1)
+				else:
+					summon_boss()
+				return
+			feedback_time = 3
+			return
+	feedback = "E 与 NPC 交谈、打开宝箱，或修复已解锁节点。"
 	feedback_time = 3
 
+func accept_npc() -> void:
+	if npc_selected < 0 or npc_selected >= npcs.size():
+		return
+	var npc: Dictionary = npcs[npc_selected]
+	var spec: Dictionary = Data.NPCS[npc.id]
+	if npc.used:
+		state = "playing"
+		return
+	match int(npc.id):
+		0:
+			player.health = mini(max_health(),player.health + 2)
+			player.energy = minf(100,player.energy + 30)
+		1:
+			npc_contract = true
+			if room_wave == 1:
+				spawn_bug(Vector2(2000,598),event.kind)
+				spawn_bug(Vector2(2500,598),event.kind)
+				if room_phase == "relay":
+					room_phase = "combat"
+		2:
+			ward = mini(3,ward + 1)
+		3:
+			if coins < 12:
+				feedback = "工单不足：只狼的训练需要 12 工单。"
+				feedback_time = 3
+				return
+			coins -= 12
+			bonus_damage += 1
+	npc.used = true
+	state = "playing"
+	say(spec.quote,3,spec.name,npc.p)
+	log_event(spec.name + "：" + spec.quote,spec.color)
+	audio.sfx("coffee")
+
 func bug_defeated(bug: CharacterBody2D) -> void:
-	kills[bug.kind] += 1
-	burst(bug.position + Vector2(0, -25), bug.color(), 25)
-	if bug.kind == "boss":
-		state = "won"
-		repaired = 4
-		log_event(STAGES[3].log, Color("c3f3c7"))
-		say("来了。走，下班。", 10)
+	total_kills += 1
+	room_kills += 1
+	coins += ceili((12 if bug.is_boss else 2) * (1 + rank("loot") * 0.25) * (1.5 if route == "elite" else 1.0))
+	score += 500 if bug.is_boss else 35
+	player.energy = minf(100,player.energy + 5 + rank("energy") * 4 + (6 if event.hazard == "vacuum" else 0))
+	if rank("leech") > 0 and total_kills % (10 - rank("leech") * 2) == 0:
+		player.health = mini(max_health(),player.health + 1)
+	burst(bug.position + Vector2(0,-35),bug.color(),24)
+	if bug.is_boss:
+		cleared_rooms += 1
+		room_phase = "reward"
+		coins += 25 if npc_contract else 0
+		projectiles.clear()
+		hazards.clear()
+		player.health = mini(max_health(),player.health + 1)
+		player.energy = 100
+		upgrade_choices = roll_upgrades()
+		state = "upgrade"
+		card_selection = 0
+		log_event("%s 已解决 · 选择技能继续救场。" % event.title,Color("b5e4bc"))
 		audio.sfx("win")
-		if best_time == 0 or run_time < best_time:
-			best_time = run_time
-			save_record()
+		update_records(false)
+	elif bug.kind == "leak" and bug.spawn_depth == 0 and enemies.size() < 16:
+		for offset in [-32,32]:
+			spawn_bug(bug.position + Vector2(offset,-8),"leak",false,1)
+
+func roll_upgrades() -> Array[Dictionary]:
+	var pool: Array[Dictionary] = []
+	for skill in Data.SKILLS:
+		if rank(skill.id) < int(skill.max):
+			pool.append(skill)
+	var choices: Array[Dictionary] = []
+	while not pool.is_empty() and choices.size() < 3:
+		var index: int = rng.randi_range(0,pool.size() - 1)
+		choices.append(pool[index])
+		pool.remove_at(index)
+	for boon in Data.BOONS:
+		if choices.size() < 3:
+			choices.append(boon)
+	if cleared_rooms == 1 and rank("swords") == 0 and not choices.any(func(skill): return skill.id == "swords"):
+		choices[0] = Data.skill("swords")
+	return choices
+
+func choose_upgrade(index: int) -> void:
+	if state != "upgrade" or index < 0 or index >= upgrade_choices.size():
+		return
+	var skill: Dictionary = upgrade_choices[index]
+	if rank(skill.id) >= int(skill.max):
+		return
+	apply_upgrade(skill.id)
+	upgrade_choices.clear()
+	audio.sfx("repair")
+	if mode == "story" and cleared_rooms >= STORY_ROOMS:
+		state = "won"
+		update_records(true)
 	else:
-		float_text("%s 修复 %d/3" % [STAGES[mini(stage, 2)].tool, kills[bug.kind]], bug.position + Vector2(0, -85), Color("bcf1cb"))
-		if kills[bug.kind] == 3:
-			log_event("%s：问题已清空。找到终端，按 E。" % STAGES[stage].tool, Color("bde9c6"))
+		state = "route"
+		card_selection = 0
+
+func apply_upgrade(id: String) -> void:
+	skill_ranks[id] = rank(id) + 1
+	if id == "health":
+		player.health = mini(max_health(),player.health + 2)
+	elif id == "rest":
+		player.health = max_health()
+		player.energy = 100
+	elif id == "funds":
+		coins += 40
+		player.health = mini(max_health(),player.health + 2)
+	log_event("新技能：%s Lv.%d" % [Data.skill(id).name,rank(id)],Color("b8e9c6"))
+
+func choose_route(index: int) -> void:
+	if state != "route" or index not in [0,1]:
+		return
+	route = "supply" if index == 0 else "elite"
+	room_index += 1
+	build_room()
+
+func resolve_attack(bug: Node, amount: int, direction: float) -> void:
+	if not is_instance_valid(bug) or bug.dead:
+		return
+	var critical: bool = rng.randf() < rank("crit") * 0.1
+	var applied: bool = bug.take_hit(amount * (2 if critical else 1),direction,false)
+	if not applied:
+		return
+	if critical:
+		float_text("暴击",bug.position + Vector2(0,-100),Color("ffdaa4"))
+	if rank("burn") > 0:
+		bug.burn_time = 3
+		bug.burn_damage = rank("burn")
+	if rank("chain") > 0:
+		for other in enemies.duplicate():
+			if is_instance_valid(other) and other != bug and not other.dead and other.position.distance_to(bug.position) < 220:
+				other.take_hit(rank("chain"),direction,true)
+				vfx(5,other.position + Vector2(0,-35),80,0.3)
+				break
+
+func use_swords() -> void:
+	if rank("swords") == 0 or player.swords_cooldown > 0:
+		return
+	var targets: Array = enemies.filter(func(bug): return is_instance_valid(bug) and not bug.dead and bug.position.distance_to(player.position) < 720)
+	if targets.is_empty():
+		feedback = "飞剑范围内没有敌人。"
+		feedback_time = 2
+		return
+	player.swords_cooldown = (7.0 - rank("swords") * 0.6) * cooldown_scale()
+	for i in range(2 + rank("swords")):
+		var target: Node = targets[i % targets.size()]
+		shoot(player.position + Vector2(i * 11 - 15,-80 - i * 6),Vector2(0,-120),Color("f7d58b"),i * 0.06,true,1 + rank("swords"),target)
+	audio.sfx("skill")
 
 func fall_recover() -> void:
 	player.invulnerable = 0
-	player.hurt(2, player.position.x + 1)
+	player.hurt(2,player.position.x + 1)
 	if state == "playing":
-		player.position = checkpoint
+		player.position = Vector2(980 if player.position.x < 1180 else 2160,470)
 		player.velocity = Vector2.ZERO
-		camera_x = clampf(checkpoint.x - 440, 0, WORLD_LENGTH - 1280)
-		say("坏啦", 2.5, "毅川 · 掉进空指针深渊")
+		player.reset_physics_interpolation()
+		say("坏啦",2,"毅川 · 空指针深渊")
 
 func die() -> void:
 	state = "dead"
-	deaths += 1
 	speech = "哦豁，完蛋"
-	speech_time = 10
+	speech_time = 8
 	audio.sfx("dead")
+	update_records(false)
 
-func respawn() -> void:
-	player.position = checkpoint
-	player.velocity = Vector2.ZERO
-	player.health = 6
-	player.energy = 100
-	player.invulnerable = 2
-	projectiles.clear()
-	state = "playing"
-	camera_x = clampf(checkpoint.x - 440, 0, WORLD_LENGTH - 1280)
-	say("来了", 3, "毅川 · 从最近一次成功构建恢复")
-	for enemy in enemies:
-		if is_instance_valid(enemy) and enemy.kind == "boss":
-			enemy.hp = enemy.max_hp
-			enemy.position = enemy.origin
-			enemy.boss_activated = false
-
-func shoot(point: Vector2, velocity: Vector2, color: Color) -> void:
-	projectiles.append({"p": point, "v": velocity, "color": color, "life": 6.0})
-
-func vfx(index: int, point: Vector2, size: float = 100, duration: float = 0.25, facing: float = 1) -> void:
-	effects.append({"index": index, "p": point, "size": size, "life": duration, "duration": duration, "facing": facing})
-
-func burst(point: Vector2, color: Color, count: int) -> void:
-	for i in range(count):
-		particles.append({"p": point, "v": Vector2(rng.randf_range(-170, 170), rng.randf_range(-220, 60)), "color": color, "life": rng.randf_range(0.25, 0.65), "size": rng.randi_range(2, 6)})
-
-func float_text(value: String, point: Vector2, color: Color) -> void:
-	floating_text.append({"text": value, "p": point, "color": color, "life": 1.3})
-
-func say(value: String, duration: float = 2.5, who: String = "毅川 / 虚幻引擎开发师") -> void:
-	speech = value
-	speaker = who
-	speech_time = duration
-
-func log_event(value: String, color: Color) -> void:
-	logs.append({"text": value, "color": color})
-	if logs.size() > 3:
-		logs.pop_front()
-
-func time_label(seconds: float) -> String:
-	return "%02d:%02d" % [int(seconds) / 60, int(seconds) % 60]
+func update_records(won: bool) -> void:
+	best_score = maxi(best_score,score)
+	if mode == "endless":
+		best_floor = maxi(best_floor,cleared_rooms)
+	elif won and (best_time <= 0 or run_time < best_time):
+		best_time = run_time
+	save_record()
 
 func load_record() -> void:
 	if FileAccess.file_exists(record_path):
 		var data = JSON.parse_string(FileAccess.get_file_as_string(record_path))
 		if data is Dictionary:
-			best_time = float(data.get("best_time", 0))
+			best_time = float(data.get("rogue_best_time",0))
+			best_floor = int(data.get("best_floor",0))
+			best_score = int(data.get("best_score",0))
 
 func save_record() -> void:
-	var file := FileAccess.open(record_path, FileAccess.WRITE)
+	var file := FileAccess.open(record_path,FileAccess.WRITE)
 	if file:
-		file.store_string(JSON.stringify({"best_time": best_time}))
+		file.store_string(JSON.stringify({"rogue_best_time":best_time,"best_floor":best_floor,"best_score":best_score}))
+
+func shoot(point: Vector2, velocity: Vector2, color: Color, delay: float = 0, friendly: bool = false, amount: int = 1, target: Node = null) -> void:
+	projectiles.append({"p":point,"v":velocity,"color":color,"delay":delay,"friendly":friendly,"damage":amount,"target":target,"life":7.0})
+
+func vfx(index: int, point: Vector2, size: float = 100, duration: float = 0.25, facing: float = 1) -> void:
+	effects.append({"index":index,"p":point,"size":size,"life":duration,"duration":duration,"facing":facing})
+
+func burst(point: Vector2, color: Color, count: int) -> void:
+	for i in range(count):
+		particles.append({"p":point,"v":Vector2(rng.randf_range(-170,170),rng.randf_range(-220,60)),"color":color,"life":rng.randf_range(0.25,0.65),"size":rng.randi_range(2,6)})
+
+func float_text(value: String, point: Vector2, color: Color) -> void:
+	floating_text.append({"text":value,"p":point,"color":color,"life":1.2})
+
+func say(value: String, duration: float = 2.5, who: String = "毅川 / 虚幻引擎开发师", anchor: Vector2 = Vector2.INF) -> void:
+	speech = value
+	speaker = who
+	speech_time = duration
+	speech_anchor = anchor
+
+func log_event(value: String, color: Color) -> void:
+	logs.append({"text":value,"color":color})
+	if logs.size() > 3:
+		logs.pop_front()
+
+func time_label(seconds: float) -> String:
+	return "%02d:%02d" % [int(seconds) / 60,int(seconds) % 60]
+
+func _unhandled_input(input: InputEvent) -> void:
+	if input is InputEventKey and input.pressed and not input.echo:
+		var key: int = input.keycode
+		if key == KEY_M:
+			muted = not muted
+			AudioServer.set_bus_mute(0,muted)
+		elif key == KEY_F11:
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
+		elif key in [KEY_1,KEY_2,KEY_3] and state == "upgrade":
+			choose_upgrade(key - KEY_1)
+		elif key in [KEY_1,KEY_2] and state == "route":
+			choose_route(key - KEY_1)
+		elif key == KEY_F1 and state in ["title","playing","paused","guide"]:
+			toggle_panel("guide")
+		elif key == KEY_TAB and state in ["playing","paused","build"]:
+			toggle_panel("build")
+		elif key == KEY_ESCAPE:
+			if state == "playing":
+				state = "paused"
+			elif state == "paused":
+				state = "playing"
+			elif state in ["build","guide"]:
+				state = previous_state
+			elif state == "npc":
+				state = "playing"
+		elif key == KEY_R and state in ["dead","won"]:
+			start_run()
+		elif key in [KEY_LEFT,KEY_UP,KEY_RIGHT,KEY_DOWN]:
+			var increment: int = -1 if key in [KEY_LEFT,KEY_UP] else 1
+			if state == "title":
+				selection = posmod(selection + increment,3)
+			elif state in ["upgrade","route"]:
+				card_selection = posmod(card_selection + increment,3 if state == "upgrade" else 2)
+		elif key in [KEY_ENTER,KEY_KP_ENTER]:
+			match state:
+				"title": activate_menu(selection)
+				"upgrade": choose_upgrade(card_selection)
+				"route": choose_route(card_selection)
+				"npc": accept_npc()
+				"paused": state = "playing"
+				"dead", "won": start_run()
+	if input is InputEventMouseButton and input.pressed and input.button_index == MOUSE_BUTTON_LEFT:
+		handle_click(get_global_mouse_position())
+
+func toggle_panel(panel: String) -> void:
+	if state == panel:
+		state = previous_state
+	else:
+		previous_state = state
+		state = panel
+
+func activate_menu(index: int) -> void:
+	if index in [0,1]:
+		start_run("story" if index == 0 else "endless")
+	else:
+		previous_state = "title"
+		state = "guide"
+
+func handle_click(point: Vector2) -> void:
+	match state:
+		"title":
+			for i in range(3):
+				if Rect2(96,426 + i * 62,320,52).has_point(point):
+					activate_menu(i)
+		"upgrade":
+			for i in range(3):
+				if Rect2(160 + i * 328,220,304,328).has_point(point):
+					choose_upgrade(i)
+		"route":
+			for i in range(2):
+				if Rect2(285 + i * 370,250,340,280).has_point(point):
+					choose_route(i)
+		"guide", "build":
+			if Rect2(1000,65,150,44).has_point(point):
+				state = previous_state
+		"npc":
+			if Rect2(445,440,390,58).has_point(point):
+				accept_npc()
+			elif Rect2(445,515,390,46).has_point(point):
+				state = "playing"
+		"paused", "dead", "won":
+			if Rect2(470,440,340,60).has_point(point):
+				if state == "paused":
+					state = "playing"
+				else:
+					start_run()
+			elif Rect2(470,518,340,48).has_point(point):
+				state = "title"
+				world.visible = false
+		"playing":
+			if Rect2(1180,23,64,46).has_point(point):
+				state = "paused"

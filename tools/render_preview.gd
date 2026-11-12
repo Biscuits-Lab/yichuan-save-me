@@ -1,67 +1,75 @@
 extends SceneTree
-
 var game: Node
-
 func _initialize() -> void:
 	call_deferred("run")
-
 func snap(name: String) -> void:
-	for i in range(4):
+	for i in range(5):
 		await process_frame
 	await RenderingServer.frame_post_draw
-	var path: String = "res://output/previews/" + name + ".png"
-	var result: Error = root.get_texture().get_image().save_png(path)
-	print("PREVIEW: ", name, " ", result)
-
+	print("PREVIEW: ",name," ",root.get_texture().get_image().save_png("res://output/previews/" + name + ".png"))
 func run() -> void:
 	DirAccess.make_dir_recursive_absolute("res://output/previews")
 	game = load("res://scenes/main.tscn").instantiate()
 	root.add_child(game)
-	game.record_path = "res://.tools/preview-record.json"
-	await snap("01-title")
-	game.previous_state = "title"
-	game.state = "guide"
-	await snap("02-guide")
-	game.start_run()
+	game.record_path = "res://.tools/rogue-preview-record.json"
+	await snap("rogue-01-title")
+	game.start_run("story",20261112)
 	game.chapter_time = 0
-	game.player.position = Vector2(450, 600)
-	game.say("来了", 20)
-	await snap("03-ugs")
-	game.player.cast_skill()
-	await snap("04-breakpoint")
-	game.player.position = Vector2(220, 600)
+	game.player.position = Vector2(280,598)
+	game.player.health = 5
+	game.interact()
+	await snap("rogue-02-npc")
+	game.accept_npc()
+	game.player.position = Vector2(620,598)
+	game.spawn_wave(0)
 	game.player.invulnerable = 0
-	game.player.skill_time = 0
-	game.effects.clear()
+	game.say("来了",10)
 	Input.action_press("move_right")
-	for i in range(12):
-		await physics_frame
-	await snap("08-running")
-	Input.action_release("move_right")
-	game.player.position = Vector2(430, 600)
-	game.player.velocity = Vector2.ZERO
-	game.player.facing = 1
-	game.player.attack()
 	for i in range(8):
 		await physics_frame
-	await snap("09-slash")
-	game.stage = 2
+	await snap("rogue-03-room")
+	Input.action_release("move_right")
+	game.player.attack()
+	for i in range(15):
+		await physics_frame
+	await snap("rogue-04-animation")
+	for bug in game.enemies:
+		if is_instance_valid(bug):
+			bug.dead = true
+			bug.queue_free()
+	game.enemies.clear()
+	game.player.position = Vector2(2590,598)
+	game.player.velocity = Vector2.ZERO
+	game.camera_x = 2150
+	game.world.position.x = -2150
+	game.player.reset_physics_interpolation()
+	game.summon_boss()
+	game.boss_ref.telegraph = 0.7
+	game.say("毅川救我",8,"若宇")
+	await snap("rogue-05-boss")
+	game.boss_ref.take_hit(99999,1,true)
+	game.upgrade_choices.assign([game.Data.skill("swords"),game.Data.skill("chain"),game.Data.skill("rollback")])
+	await snap("rogue-06-skills")
+	game.choose_upgrade(0)
+	await snap("rogue-07-routes")
+	game.choose_route(1)
 	game.chapter_time = 0
-	game.player.position = Vector2(3910, 600)
-	game.camera_x = 3470
-	game.world.position.x = -3470
-	game.say("坏啦", 20, "毅川 · 这个文件到底谁锁的？")
-	await snap("05-p4")
-	game.stage = 3
-	game.player.position = Vector2(5490, 600)
-	game.camera_x = 5050
-	game.world.position.x = -5050
-	game.say("怀不上了", 20)
-	await snap("06-boss")
-	game.run_time = 196
-	game.repaired = 4
-	game.state = "won"
-	await snap("07-complete")
+	game.apply_upgrade("rollback")
+	game.apply_upgrade("blade")
+	game.apply_upgrade("chain")
+	game.previous_state = "playing"
+	game.state = "build"
+	await snap("rogue-08-build")
+	game.state = "guide"
+	await snap("rogue-09-guide")
+	game.start_run("endless",42)
+	game.room_index = 12
+	game.cleared_rooms = 12
+	game.build_room()
+	game.chapter_time = 0
+	game.player.position = Vector2(620,598)
+	game.spawn_wave(0)
+	await snap("rogue-10-endless")
 	game.queue_free()
 	for i in range(3):
 		await process_frame
