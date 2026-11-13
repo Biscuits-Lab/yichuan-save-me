@@ -286,6 +286,42 @@ func test_compact_room_population() -> void:
 					check(reachable, "Every enemy in the denser small-room waves can navigate to the player")
 	print("Compact rooms and denser waves checks complete")
 
+func test_exploration_minimap() -> void:
+	for seed_number in [7, 51, 20261113]:
+		for floor_number in range(3):
+			safe_start(seed_number)
+			game.floor_index = floor_number
+			game.generate_floor()
+			var layout: Dictionary = game.view.minimap_layout()
+			check(layout.panel.position.x > 1000 and layout.panel.position.y > 58 and layout.panel.end.x <= 1280, "Minimap occupies a small upper-right panel below the points HUD")
+			check(layout.rooms.size() == game.rooms.size() and layout.halls.size() == game.corridors.size(), "Minimap shows the complete connected floor")
+			var fits: bool = true
+			for room in layout.rooms:
+				fits = fits and layout.panel.grow(-10).encloses(room.rect)
+			for hall in layout.halls:
+				fits = fits and layout.panel.grow(-10).encloses(hall.rect)
+			check(fits and layout.panel.has_point(layout.player), "All map rooms, corridors and the player fit in the panel across floor shapes")
+			check(layout.rooms[0].status == "current" and layout.rooms.filter(func(room: Dictionary) -> bool: return room.status == "unvisited").size() == game.rooms.size() - 1, "New floors distinguish the current entrance from unvisited rooms")
+	safe_start(20261113)
+	var next_id: int = game.current_room().links.filter(func(id: int) -> bool: return id >= 0)[0]
+	game.enter_room(next_id)
+	var layout: Dictionary = game.view.minimap_layout()
+	check(layout.rooms[0].status == "visited" and layout.rooms[next_id].status == "current", "Entering another room updates visited and current room markers")
+	game.current_room().cleared = true
+	game.enemies.clear()
+	game.enter_room(0)
+	layout = game.view.minimap_layout()
+	check(layout.rooms[0].status == "current" and layout.rooms[next_id].status == "visited", "Revisiting rooms keeps exploration history")
+	game.player = game.corridors[0].rect.get_center()
+	layout = game.view.minimap_layout()
+	check(layout.halls.any(func(hall: Dictionary) -> bool: return hall.rect.grow(0.1).has_point(layout.player)), "Player marker follows continuous movement into a corridor")
+	check(layout.rooms.all(func(room: Dictionary) -> bool: return room.status != "current"), "Corridor travel does not mark an empty room as the player's position")
+	game.floor_index = 1
+	game.generate_floor()
+	layout = game.view.minimap_layout()
+	check(layout.rooms.filter(func(room: Dictionary) -> bool: return room.status != "unvisited").size() == 1, "Entering a new floor resets that floor's exploration map")
+	print("Exploration minimap checks complete")
+
 func test_combat() -> void:
 	for spec in game.Data.WEAPONS:
 		safe_start()
@@ -867,6 +903,7 @@ func run() -> void:
 	test_continuous_traversal()
 	test_floor_geometry_and_restart()
 	test_compact_room_population()
+	test_exploration_minimap()
 	test_combat()
 	test_enemy_behaviour()
 	test_inventory_and_economy()

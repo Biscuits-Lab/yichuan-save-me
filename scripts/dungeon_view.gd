@@ -70,7 +70,7 @@ func _draw() -> void:
 		box(Rect2(640 - width / 2, 675, width, 32), Color("263d3a"), MINT, 8)
 		center(game.message, Vector2(640, 697), 17, WHITE)
 	if game.show_fps:
-		micro("%d FPS" % Engine.get_frames_per_second(), Vector2(1100, 83), MINT, 9)
+		micro("%d FPS" % Engine.get_frames_per_second(), Vector2(1100, 248), MINT, 9)
 
 func text(value: String, p: Vector2, size: int = 18, color: Color = WHITE, heavy: bool = false) -> void:
 	draw_string(game.bold if heavy else game.font, p, value, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
@@ -456,9 +456,43 @@ func terminal(room: Dictionary) -> void:
 	if room.id == game.room_id and game.player.distance_to(p) < 90:
 		center(label, p + Vector2(0, 32), 14, MINT)
 
+func minimap_layout() -> Dictionary:
+	var panel := Rect2(1062, 76, 194, 154)
+	if game.rooms.is_empty():
+		return {"panel":panel, "rooms":[], "halls":[], "player":panel.get_center()}
+	var bounds: Rect2 = game.rooms[0].rect
+	for room in game.rooms:
+		bounds = bounds.merge(room.rect)
+	var inner: Rect2 = panel.grow(-12)
+	var scale_value: float = minf(inner.size.x / bounds.size.x, inner.size.y / bounds.size.y)
+	var offset: Vector2 = inner.get_center() - bounds.get_center() * scale_value
+	var mapped_rooms: Array[Dictionary] = []
+	for room in game.rooms:
+		var status: String = "visited" if room.visited else "unvisited"
+		if room.id == game.room_id and room.rect.has_point(game.player):
+			status = "current"
+		mapped_rooms.append({"id":room.id, "rect":Rect2(offset + room.rect.position * scale_value, room.rect.size * scale_value), "status":status})
+	var halls: Array[Dictionary] = []
+	for hall in game.corridors:
+		halls.append({"rect":Rect2(offset + hall.rect.position * scale_value, hall.rect.size * scale_value), "visited":game.rooms[hall.a].visited and game.rooms[hall.b].visited})
+	return {"panel":panel, "rooms":mapped_rooms, "halls":halls, "player":offset + game.player * scale_value}
+
+func minimap() -> void:
+	var layout: Dictionary = minimap_layout()
+	box(layout.panel, Color(0.055, 0.09, 0.12, 0.9), LINE, 8)
+	for hall in layout.halls:
+		draw_rect(hall.rect, Color("4b7969") if hall.visited else Color("34444d"))
+	for room in layout.rooms:
+		var color: Color = {"unvisited":Color("45535d"), "visited":MINT.darkened(0.35), "current":GOLD}[room.status]
+		draw_rect(room.rect, color)
+		draw_rect(room.rect, color.lightened(0.2), false, 1)
+	draw_circle(layout.player, 3.5, BG)
+	draw_circle(layout.player, 2, WHITE)
+
 func hud() -> void:
 	if game.rooms.is_empty():
 		return
+	minimap()
 	var room: Dictionary = game.current_room()
 	box(Rect2(24, 19, 225, 39), Color(0.055, 0.09, 0.12, 0.88), Color("485561"), 10)
 	item_icon("heart", Vector2(43, 38), 0.44)
