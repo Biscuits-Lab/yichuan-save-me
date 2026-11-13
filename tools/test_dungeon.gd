@@ -66,10 +66,14 @@ func test_generation() -> void:
 			check(kinds.get("combat", 0) + kinds.get("elite", 0) + kinds.get("boss", 0) >= rooms.size() - 4, "At least sixty percent of floor rooms contain combat")
 			var sizes: Dictionary = {}
 			var safe_npcs: bool = true
+			var compact_npcs: bool = true
 			for room in rooms:
 				sizes[str(room.rect.size)] = true
 				safe_npcs = safe_npcs and ((room.npc >= 0) == (room.type == "npc"))
+				if room.type == "npc":
+					compact_npcs = compact_npcs and room.rect.size.x >= 512 and room.rect.size.x <= 576 and room.rect.size.y >= 352 and room.rect.size.y <= 416
 			check(safe_npcs, "NPCs never populate combat, elite, boss, shop or ordinary rooms")
+			check(compact_npcs, "NPC meeting rooms use compact dimensions with room for exits and interaction")
 			check(sizes.size() >= 3, "Each floor mixes small, medium and large physical rooms")
 			var connected: bool = true
 			for hall in generated.corridors:
@@ -195,6 +199,8 @@ func test_continuous_traversal() -> void:
 				game.hit_enemy(enemy, 100000, game.player)
 			step(46)
 		check(room.cleared, "All waves release the physical doorway")
+	if game.state == "shop":
+		game.leave_shop()
 	# Return along the same corridor without replacing the player position.
 	game.current_room().cleared = true
 	game.enemies.clear()
@@ -363,9 +369,9 @@ func test_inventory_and_economy() -> void:
 	check(absf(game.equipment_stat("vest") - 1.65) < 0.001, "Fused equipment applies the stronger stat multiplier")
 	while game.weapons.size() < 6:
 		game.add_item("pistol")
-	check(not game.add_item("pistol"), "Six-weapon capacity is enforced")
+	check(not game.add_item("orb"), "Full weapon slots reject an unmatched pickup")
 	game.state = "shop"
-	game.stock[1] = {"id":"pistol", "tier":1, "sold":false}
+	game.stock[1] = {"id":"orb", "tier":1, "sold":false}
 	balance = game.points
 	check(not game.buy(1) and game.points == balance and not game.stock[1].sold, "Full inventory never consumes currency or stock")
 	game.state = "inventory"
@@ -386,7 +392,9 @@ func test_inventory_and_economy() -> void:
 	game.points = 100
 	var refresh: int = game.refresh_price()
 	balance = game.points
-	check(game.refresh_shop() and game.points == balance - refresh and game.refresh_price() == refresh + 2, "Paid reroll changes stock and increases next price")
+	check(refresh == 0 and game.refresh_shop() and game.points == balance and game.refresh_price() == 4, "First shelf refresh is free and the second costs four points")
+	balance = game.points
+	check(game.refresh_shop() and game.points == balance - 4 and game.refresh_price() == 6, "Later shelf refreshes charge points and increase the price")
 	var saved_stock: Array = game.stock.duplicate(true)
 	game.state = "playing"
 	game.open_shop()
@@ -394,6 +402,81 @@ func test_inventory_and_economy() -> void:
 	game.state = "playing"
 	check(not game.fuse("weapon", 0) and not game.buy(0) and not game.sell("weapon", 0), "Combat cannot invoke shop-only transactions")
 	print("Inventory and economy checks complete")
+
+func test_full_inventory_auto_merge() -> void:
+	for kind in ["weapon", "equipment"]:
+		safe_start()
+		var id: String = "pistol" if kind == "weapon" else "vest"
+		var storage: Array[Dictionary] = game.weapons if kind == "weapon" else game.equipment
+		storage.clear()
+		game.add_item(id)
+		game.add_item(id)
+		check(storage.size() == 2 and storage[0].tier == 1 and storage[1].tier == 1, "Unfilled slots keep duplicate pickups for manual fusion")
+		while storage.size() < 6:
+			game.add_item(id)
+		check(game.add_item(id) and storage.size() == 6, "Full slots accept a matching pickup without exceeding capacity")
+		check(storage.filter(func(entry: Dictionary) -> bool: return entry.tier == 2).size() == 1 and storage.filter(func(entry: Dictionary) -> bool: return entry.tier == 1).size() == 5, "Incoming copy and one carried copy upgrade together")
+		check(game.message.begins_with("自动合并"), "Pickup reports the automatic upgrade")
+		var saved: Array = storage.duplicate(true)
+		check(not game.add_item(id, 3) and storage == saved, "Different-quality pickups leave full inventory unchanged")
+		check(game.add_item(id, 2) and storage.size() == 6 and storage[-1].tier == 3, "Matching fine pickups upgrade to epic")
+		check(game.add_item(id, 3) and storage.size() == 6 and storage[-1].tier == 4, "Matching epic pickups upgrade to legendary")
+		saved = storage.duplicate(true)
+		check(not game.add_item(id, 4) and storage == saved, "Legendary duplicates cannot exceed the quality limit")
+	safe_start()
+	game.weapons.clear()
+	for tier in [1, 2, 3]:
+		game.add_item("blade", tier)
+	for i in range(3):
+		game.add_item("pistol")
+	check(game.add_item("blade") and game.weapons.size() == 4 and game.weapons[-1].id == "blade" and game.weapons[-1].tier == 4, "A full-slot pickup chains through matching higher qualities and frees slots")
+	check(game.weapons.filter(func(entry: Dictionary) -> bool: return entry.id == "pistol" and entry.tier == 1).size() == 3, "Chain fusion preserves unrelated weapons")
+	safe_start()
+	game.health = 10
+	game.add_item("heart")
+	for i in range(5):
+		game.add_item("boots")
+	check(game.add_item("heart") and is_equal_approx(game.max_health(), 113) and is_equal_approx(game.health, 50), "Auto-fused batteries preserve pickup healing and apply the upgraded maximum")
+	safe_start()
+	for tier in [1, 2, 3]:
+		game.add_item("heart", tier)
+	for i in range(3):
+		game.add_item("boots")
+	game.health = game.max_health()
+	check(game.add_item("heart") and game.equipment.size() == 4 and is_equal_approx(game.max_health(), 162) and is_equal_approx(game.health, 162), "Chained health equipment fusion clamps current health to the final maximum")
+	safe_start()
+	game.weapons.clear()
+	for spec in game.Data.WEAPONS:
+		game.add_item(spec.id, 2)
+	game.current_room().type = "treasure"
+	game.player = game.room_center()
+	game.interact()
+	check(game.current_room().used and game.weapons.size() == 6 and game.weapons[-1].tier == 3, "Full weapon slots receive and auto-fuse a real treasure-room reward")
+	check(game.message.begins_with("自动合并"), "Treasure reward preserves the automatic fusion message")
+	safe_start()
+	game.weapons.clear()
+	for i in range(6):
+		game.add_item("pistol")
+	game.current_room().type = "shop"
+	game.open_shop()
+	game.points = 100
+	game.stock[0] = {"id":"pistol", "tier":1, "sold":false}
+	var price: int = game.shop_price(game.stock[0])
+	key(KEY_1)
+	check(game.stock[0].sold and game.points == 100 - price and game.weapons.size() == 6 and game.weapons[-1].tier == 2, "Shop purchase keys pay once and auto-fuse matching stock into full slots")
+	check(game.message.begins_with("自动合并"), "Shop keeps the automatic fusion result visible")
+	safe_start()
+	game.weapons.clear()
+	for i in range(6):
+		game.add_item("pistol")
+		game.add_item("vest", 4)
+	game.current_room().type = "npc"
+	game.current_room().npc = 4
+	game.selected_npc = 4
+	game.state = "npc"
+	check(game.accept_npc() and game.current_room().npc_used and game.weapons.size() == 6 and game.weapons[-1].tier == 2, "Laya can give a matching normal weapon when both bags are full")
+	check(game.message.begins_with("自动合并"), "NPC gift preserves the automatic fusion message")
+	print("Full inventory auto-fusion checks complete")
 
 func test_enemy_behaviour() -> void:
 	safe_start()
@@ -430,7 +513,7 @@ func test_enemy_behaviour() -> void:
 	print("Enemy behaviour checks complete")
 
 func test_npcs() -> void:
-	for index in range(7):
+	for index in range(game.Data.NPCS.size()):
 		safe_start()
 		game.current_room().type = "npc"
 		game.current_room().npc = index
@@ -467,10 +550,11 @@ func test_npcs() -> void:
 				enemy.age = 2
 				game.update_knight(0.1)
 				check(enemy.hp < enemy.max_hp, "Companion independently attacks an actual enemy")
-			3: check(game.points == 8 and game.damage_scale() > 1.1, "Sekiro training charges points and raises damage")
+			3: check(game.points == 8 and game.damage_scale() > 1.1, "Basan training charges points and raises damage")
 			4: check(game.weapons.size() + game.equipment.size() == 2, "Laya grants a real weapon or equipment")
 			5: check(game.state == "shop" and game.stock.size() == 4, "Coin opens a persistent purchasable stock")
 			6: check(game.onion_skill, "Hashao unlocks Q onion guard")
+			7: check(game.weapons[0].tier == 2 and game.points == 20, "Jiahao upgrades an equipped weapon without charging or consuming a slot")
 		if index != 5:
 			game.state = "npc"
 			var before: int = game.points
@@ -488,14 +572,167 @@ func test_npcs() -> void:
 		game.add_item("pistol")
 	for i in range(6):
 		game.add_item("vest")
+	for entry in game.weapons + game.equipment:
+		entry.tier = 4
 	game.current_room().type = "npc"
 	game.current_room().npc = 4
 	game.current_room().npc_used = false
 	game.selected_npc = 4
 	game.state = "npc"
-	check(not game.accept_npc() and not game.current_room().npc_used, "Full bags do not consume Laya's gift")
-	check(game.Data.NPCS[0].quote == "我这显示是对的" and game.Data.NPCS[1].quote == "给毅川派活" and game.Data.NPCS[2].quote == "毅川救我" and game.Data.NPCS[3].quote == "好他妈卡我草了", "Original NPC catchphrases are preserved verbatim")
+	check(not game.accept_npc() and not game.current_room().npc_used, "Full bags with no eligible fusion do not consume Laya's gift")
+	check(game.Data.NPCS[0].quote == "this is the way" and game.Data.NPCS[1].quote == "给毅川派活" and game.Data.NPCS[2].quote == "毅川救我" and game.Data.NPCS[3].quote == "好他妈卡我草了", "NPC catchphrases match the requested dialogue")
 	print("NPC checks complete")
+
+func test_new_characters() -> void:
+	safe_start()
+	game.current_room().type = "elite"
+	game.current_room().npc = -1
+	game.current_room().cleared = false
+	game.current_room().started = true
+	game.wave = 2
+	game.wave_total = 3
+	game.spawn_wave()
+	check(game.enemies.size() == 1 and game.enemies[0].kind == "shark", "Elite room final wave spawns Big Shark as its real boss")
+	var shark: Dictionary = game.enemies[0]
+	shark.age = 2
+	shark.cooldown = 0
+	game.update_enemies(0.01)
+	check(shark.windup > 0 and game.projectiles.is_empty(), "Big Shark warns before its attack")
+	var before: Vector2 = shark.p
+	game.update_enemies(0.7)
+	game.update_enemies(0.2)
+	check(shark.charge > 0 and shark.p.distance_to(before) > 30 and game.projectiles.size() == 5, "Big Shark performs a physical charge and five-shot fan")
+	shark.hp = shark.max_hp * 0.45
+	game.update_enemies(0.01)
+	check(shark.phase == 1, "Big Shark enrages below half health")
+	game.projectiles.clear()
+	game.boss_attack(shark)
+	check(game.projectiles.size() == 7, "Enraged Big Shark widens its projectile fan")
+	game.hit_enemy(shark, 100000, game.player)
+	step(46)
+	check(game.current_room().cleared and game.state == "shop" and game.floor_index == 0, "Defeating the elite boss opens supplies without ending the floor early")
+	game.leave_shop()
+	check(game.state == "playing", "Leaving elite supplies resumes exploration")
+	safe_start()
+	game.current_room().type = "npc"
+	game.current_room().npc = 7
+	game.current_room().npc_used = false
+	game.selected_npc = 7
+	game.state = "npc"
+	game.weapons[0].tier = 4
+	check(not game.accept_npc() and not game.current_room().npc_used, "Jiahao cannot exceed legendary quality or consume an unavailable upgrade")
+	game.weapons[0].tier = 3
+	var points_before: int = game.points
+	check(game.accept_npc() and game.weapons[0].tier == 4 and game.points == points_before and game.weapons.size() == 1, "Jiahao upgrades epic to legendary in place without charging")
+	print("New NPC and elite boss checks complete")
+
+func test_room_shops_and_skills() -> void:
+	for floor_number in range(3):
+		safe_start()
+		game.floor_index = floor_number
+		game.current_room().type = "combat" if floor_number % 2 == 0 else "elite"
+		game.current_room().npc = -1
+		game.current_room().started = true
+		game.current_room().cleared = false
+		game.wave = 1
+		game.wave_total = 1
+		var enemy: Dictionary = game.spawn_enemy(game.room_center() + Vector2(220, 0))
+		game.hit_enemy(enemy, 100000, game.player)
+		step(46)
+		check(game.state == "shop" and game.current_room().reward_shop and game.stock.size() == 4, "Completed combat and elite rooms automatically open four supply cards")
+		var weapons: int = 0
+		var gear: int = 0
+		for offer in game.stock:
+			weapons += 1 if game.Data.item(offer.id).kind == "weapon" else 0
+			gear += 1 if game.Data.item(offer.id).kind == "equipment" else 0
+		check(weapons == 2 and gear == 2, "Each shelf offers both random weapons and equipment")
+		game.points = 1000
+		for i in range(4):
+			check(game.buy(i), "All four post-combat cards can be purchased")
+		check(game.stock.all(func(offer: Dictionary) -> bool: return offer.sold), "Purchased shelf records each sold card")
+		var old_signature: String = str(game.stock.map(func(offer: Dictionary) -> String: return offer.id + str(offer.tier)))
+		var balance: int = game.points
+		check(game.refresh_shop() and game.points == balance and game.current_room().refreshes == 1, "First post-combat refresh is free")
+		check(game.stock.all(func(offer: Dictionary) -> bool: return not offer.sold), "Refreshing a sold-out shelf creates purchasable cards")
+		check(str(game.stock.map(func(offer: Dictionary) -> String: return offer.id + str(offer.tier))) != old_signature, "Refresh guarantees a changed item selection")
+		balance = game.points
+		check(game.refresh_shop() and game.points == balance - 4 and game.refresh_price() == 6, "Second post-combat refresh charges the advertised price")
+		key(KEY_ESCAPE)
+		check(game.state == "playing" and game.floor_index == floor_number, "Closing room supplies resumes the same floor")
+		game.player = game.room_center()
+		game.interact()
+		check(game.state == "shop" and game.refresh_price() == 6 and game.current_room().refreshes == 2, "E reopens cleared combat supplies without another free refresh")
+		game.points = 0
+		var refreshes: int = game.current_room().refreshes
+		var saved_stock: Array = game.stock.duplicate(true)
+		check(not game.refresh_shop() and game.current_room().refreshes == refreshes and game.stock == saved_stock, "Unaffordable paid refresh does not consume or replace stock")
+	for floor_number in range(3):
+		safe_start()
+		game.floor_index = floor_number
+		game.current_room().type = "boss"
+		game.current_room().started = true
+		game.current_room().cleared = false
+		game.wave = 1
+		game.wave_total = 1
+		var boss: Dictionary = game.spawn_enemy(game.room_center() + Vector2(220, 0), "boss")
+		game.hit_enemy(boss, 100000, game.player)
+		step(46)
+		check(game.state == "skill" and game.skill_offers.size() == 3 and not game.has_shop(), "Floor boss gives three skill choices instead of a shop")
+		var ids: Dictionary = {}
+		for spec in game.skill_offers:
+			ids[spec.id] = true
+		check(ids.size() == 3, "Skill choices are distinct")
+		var offered: Array = game.skill_offers.duplicate()
+		game.open_skill_reward()
+		check(game.skill_offers == offered and not game.choose_skill(-1) and not game.next_floor(), "Pending skill choices cannot be rerolled or skipped")
+		var frozen: Vector2 = game.player
+		var time_before: float = game.run_time
+		Input.action_press("move_right")
+		step(12)
+		Input.action_release("move_right")
+		key(KEY_ESCAPE)
+		check(game.state == "skill" and game.player == frozen and game.run_time == time_before, "Skill selection pauses the fight and Esc does not discard the reward")
+		var id: String = game.skill_offers[0].id
+		var balance: int = game.points
+		key(KEY_1)
+		check(game.skill_level(id) == 1 and game.points == balance and not game.choose_skill(0), "Choosing a skill is free and can only be claimed once")
+		if floor_number < 2:
+			check(game.floor_index == floor_number + 1 and game.state == "dialogue", "Skill selection advances to the next floor")
+		else:
+			check(game.state == "dialogue" and game.dialogue_kind == "ending", "Final boss skill reward leads into the princess rescue ending")
+	for spec in game.Data.SKILLS:
+		safe_start()
+		game.current_room().type = "boss"
+		game.skill_offers.assign([spec])
+		game.state = "skill"
+		check(game.choose_skill(0), "Each skill reward can be selected")
+		game.advance_dialogue()
+		match spec.id:
+			"power": check(is_equal_approx(game.damage_scale(), 1.15), "War spirit increases actual weapon damage")
+			"haste": check(is_equal_approx(game.attack_speed(), 1.12), "Gale increases actual attack speed")
+			"vigor": check(game.max_health() == 100, "Vitality increases actual maximum health")
+			"recovery":
+				game.health = 40
+				step(60)
+				check(game.health > 40.49, "Regeneration restores health in real simulation")
+			"dash":
+				game.start_dash()
+				check(game.dash_cooldown < 1.51, "Blink reduces actual dash cooldown")
+			"onion":
+				game.use_onion()
+				check(game.onion_skill and game.shield_time > 2 and game.onion_cooldown < 10, "Onion skill unlocks and strengthens the active guard")
+	safe_start()
+	for floor_number in range(3):
+		game.floor_index = floor_number
+		for room_size in [Vector2(960, 640), Vector2(1792, 1216)]:
+			for layout in range(5):
+				for rect in game.Data.obstacles(layout, "combat", Rect2(Vector2.ZERO, room_size)):
+					var drawn: Rect2 = game.view.cover_draw_rect(rect)
+					var frame: Dictionary = game.environment_atlas.frames[5 + floor_number]
+					check(rect.size == Vector2(96, 56), "Furniture footprints stay the same size in small and large rooms")
+					check(absf(drawn.size.x / drawn.size.y - frame.bounds.size.x / frame.bounds.size.y) < 0.001, "Furniture textures keep their source aspect ratio")
+	check(game.view.geometry_root.get_child_count() == game.rooms.size() + game.corridors.size(), "Static room and corridor geometry is retained separately from actors")
+	print("Room supplies, floor skills and furniture checks complete")
 
 func test_campaign() -> void:
 	game.start_run(98765)
@@ -542,11 +779,14 @@ func test_campaign() -> void:
 		if floor_number < 2:
 			game.knight_active = true
 			game.player = game.room_center()
-			game.interact()
+			check(game.state == "skill", "Floor boss automatically opens skill rewards")
+			game.choose_skill(0)
 			check(game.floor_index == floor_number + 1 and game.state == "dialogue", "E portal progresses to the next seeded floor with story")
 			check(not game.knight_active, "Heide leaves precisely when entering the next floor")
 			game.advance_dialogue()
 		else:
+			check(game.state == "skill", "Final boss offers a skill reward")
+			game.choose_skill(0)
 			check(game.state == "dialogue" and game.dialogue_kind == "ending", "Defeating Yang Ziliang starts the princess rescue ending")
 	for i in range(3):
 		game.advance_dialogue()
@@ -557,7 +797,7 @@ func test_campaign() -> void:
 	game.load_record()
 	check(game.best_score == best and best > 0, "Score record round-trips from disk")
 	game.start_run(98765, true)
-	check(game.points == 30 and game.earned == 0 and game.equipment.is_empty() and game.weapons.size() == 1 and not game.onion_skill and not game.knight_active, "Restart resets points, gear, skills and companions")
+	check(game.points == 30 and game.earned == 0 and game.equipment.is_empty() and game.weapons.size() == 1 and not game.onion_skill and not game.knight_active and game.skill_levels.is_empty() and game.skill_offers.is_empty(), "Restart resets points, gear, skills and companions")
 	game.invulnerable = 0
 	game.health = 1
 	game.hurt(100, game.player)
@@ -576,7 +816,7 @@ func run() -> void:
 	game.set_physics_process(false)
 	await process_frame
 	check(game.state == "title", "Game launches at the redesigned title")
-	check(game.hero_atlas.frames.size() == 16 and game.cast_atlas.frames.size() == 16 and game.item_atlas.frames.size() == 12 and game.enemy_atlas.frames.size() == 16 and game.environment_atlas.frames.size() == 12, "All five imagegen atlases are connected and sliced")
+	check(game.hero_atlas.frames.size() == 16 and game.cast_atlas.frames.size() == 16 and game.item_atlas.frames.size() == 12 and game.enemy_atlas.frames.size() == 16 and game.environment_atlas.frames.size() == 12 and game.basan_atlas.frames.size() == 2 and game.jiahao_atlas.frames.size() == 2 and game.shark_atlas.frames.size() == 4, "Main character and NPC imagegen atlases are connected and sliced")
 	check(game.hero_atlas.frames[0].anchor == game.hero_atlas.frames[15].anchor, "Four-direction hero animation uses a stable anchor")
 	check(game.camera is Camera2D and game.view.overlay.get_parent() is CanvasLayer, "World camera follows independently of the fixed full-window HUD")
 	check(game.vfx_atlas.frames.size() == 16 and game.utility_atlas.frames.size() == 16, "Generated animated VFX and world utility sprites are connected")
@@ -587,7 +827,10 @@ func run() -> void:
 	test_combat()
 	test_enemy_behaviour()
 	test_inventory_and_economy()
+	test_full_inventory_auto_merge()
 	test_npcs()
+	test_new_characters()
+	test_room_shops_and_skills()
 	test_campaign()
 	print("RESULT: %d checks, %d failures" % [checks, failures])
 	game.queue_free()

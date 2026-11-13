@@ -40,14 +40,23 @@ const DIALOGUES: Array[Dictionary] = [
 	{"speaker":"杨梓亮 · 策划", "line":"想带走公主？先过需求评审。放心，就改亿点点。"}
 ]
 const BOSS_NAMES: Array[String] = ["需求守门人", "迭代缝合兽", "杨梓亮 · 策划"]
+const SKILLS: Array[Dictionary] = [
+	{"id":"power", "name":"战意", "icon":"blade", "desc":"所有武器伤害提高 15%。"},
+	{"id":"haste", "name":"疾风", "icon":"chip", "desc":"所有武器攻击速度提高 12%。"},
+	{"id":"vigor", "name":"强健", "icon":"heart", "desc":"生命上限增加 20，并恢复 20 生命。"},
+	{"id":"recovery", "name":"再生", "icon":"coffee", "desc":"每秒额外恢复 0.5 生命。"},
+	{"id":"dash", "name":"瞬身", "icon":"boots", "desc":"冲刺恢复速度提高 20%。"},
+	{"id":"onion", "name":"洋葱守护", "icon":"orb", "desc":"解锁 Q 守护；已有技能则强化伤害、范围、护盾与冷却。"}
+]
 const NPCS: Array[Dictionary] = [
-	{"id":"ruoyu", "name":"若宇", "quote":"我这显示是对的", "role":"补给", "offer":"免费恢复 35 点生命。每次偶遇只能领取一次。", "button":"检查显示，领取补给", "color":Color("77d9b4")},
+	{"id":"ruoyu", "name":"若宇", "quote":"this is the way", "role":"补给", "offer":"免费恢复 35 点生命。每次偶遇只能领取一次。", "button":"检查显示，领取补给", "color":Color("77d9b4")},
 	{"id":"rhode", "name":"罗德", "quote":"给毅川派活", "role":"加急委托", "offer":"下一间战斗房追加一波敌人，完成后获得 45 积分。这里是安全区。", "button":"接下加急工单", "color":Color("ffbe83")},
 	{"id":"heide", "name":"海德骑士", "quote":"毅川救我", "role":"临时战友", "offer":"加入队伍，自动追击敌人。跟随当前层，进入下一层后离队。", "button":"并肩救回公主", "color":Color("d9e6dc")},
-	{"id":"sekiro", "name":"只狼", "quote":"好他妈卡我草了", "role":"付费训练", "offer":"花费 12 积分，本局所有武器伤害提高 12%。", "button":"学习识破 · 12 积分", "color":Color("ff9e84")},
-	{"id":"laya", "name":"菈雅", "quote":"这条路我熟，带上这个吧。", "role":"旅途赠礼", "offer":"免费赠送一件随机武器或装备；背包满时会等你整理。", "button":"接受菈雅的礼物", "color":Color("bb9ef1")},
+	{"id":"basan", "name":"八桑", "quote":"好他妈卡我草了", "role":"付费训练", "offer":"花费 12 积分，本局所有武器伤害提高 12%。", "button":"学习识破 · 12 积分", "color":Color("ff9e84")},
+	{"id":"laya", "name":"菈雅", "quote":"这条路我熟，带上这个吧。", "role":"旅途赠礼", "offer":"免费赠送一件随机武器或装备；满栏时可自动合并同名同品质副本。", "button":"接受菈雅的礼物", "color":Color("bb9ef1")},
 	{"id":"coin", "name":"硬币", "quote":"别赌运气，积分花在刀刃上。", "role":"游商", "offer":"出售武器和装备，可刷新货架。相同物品可在背包中合并。", "button":"看看硬币的货架", "color":Color("ffcf83")},
-	{"id":"onion", "name":"洋葱骑士哈少", "quote":"嗯——先想一想，再一起上！", "role":"技能传授", "offer":"解锁 Q「洋葱守护」：震退周围敌人并抵挡伤害 2 秒，冷却 10 秒。", "button":"学会洋葱守护", "color":Color("ced5ad")}
+	{"id":"onion", "name":"洋葱骑士哈少", "quote":"学习学习", "role":"技能传授", "offer":"解锁 Q「洋葱守护」：震退周围敌人并抵挡伤害 2 秒，冷却 10 秒。", "button":"学会洋葱守护", "color":Color("ced5ad")},
+	{"id":"jiahao", "name":"嘉豪", "quote":"装备到位，直接开干。", "role":"武器工匠", "offer":"免费把一把当前携带的武器提升一个品质，最高传说。每次偶遇只能改装一次。", "button":"请嘉豪改装武器", "color":Color("8fcfff")}
 ]
 
 static func item(id: String) -> Dictionary:
@@ -102,11 +111,15 @@ static func generate(seed_value: int, floor_index: int) -> Dictionary:
 		var slot: int = rng.randi_range(0, available.size() - 1)
 		rooms[available[slot]].type = special
 		available.remove_at(slot)
-	var npc_pool: Array[int] = [0, 1, 2, 3, 4, 5, 6]
+	var npc_pool: Array[int] = []
+	for i in range(NPCS.size()):
+		npc_pool.append(i)
 	for room in rooms:
 		room["npc"] = -1
 		room["npc_used"] = false
 		room["started"] = false
+		room["reward_shop"] = false
+		room["skill_claimed"] = false
 		if room.type == "npc":
 			var pick: int = rng.randi_range(0, npc_pool.size() - 1)
 			room.npc = npc_pool[pick]
@@ -115,6 +128,8 @@ static func generate(seed_value: int, floor_index: int) -> Dictionary:
 		var size: Vector2 = sizes[rng.randi_range(0, sizes.size() - 1)]
 		if room.type in ["start", "npc", "rest", "shop", "treasure"]:
 			size = Vector2(864, 608) if room.type == "start" else Vector2(736 + rng.randi_range(0, 2) * 96, 544 + rng.randi_range(0, 1) * 96)
+			if room.type == "npc":
+				size = Vector2(512 + rng.randi_range(0, 1) * 64, 352 + rng.randi_range(0, 1) * 64)
 		elif room.type == "boss":
 			size = Vector2(1792, 1216)
 		elif room.type == "elite":
@@ -163,5 +178,13 @@ static func obstacles(layout: int, room_type: String, bounds: Rect2 = ARENA) -> 
 	var result: Array[Rect2] = []
 	for rect: Rect2 in options[layout % options.size()]:
 		var factor: Vector2 = bounds.size / Vector2(896, 476)
-		result.append(Rect2(bounds.position + (rect.position - Vector2(64, 166)) * factor, rect.size * factor))
+		var center: Vector2 = bounds.position + (rect.get_center() - Vector2(64, 166)) * factor
+		var offsets: Array[Vector2] = [Vector2.ZERO]
+		if rect.size.x > 100:
+			offsets = [Vector2(-56, 0), Vector2(56, 0)]
+		elif rect.size.y > 80:
+			offsets = [Vector2(0, -44), Vector2(0, 44)]
+		for offset in offsets:
+			# Furniture size stays constant; larger rooms spread out the arrangement.
+			result.append(Rect2(center + offset - Vector2(48, 28), Vector2(96, 56)))
 	return result

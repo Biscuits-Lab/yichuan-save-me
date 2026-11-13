@@ -3,6 +3,11 @@ extends Node2D
 var game: Node
 var surface: String = "world"
 var overlay: Node2D
+var geometry_root: Node2D
+var geometry: Dictionary = {}
+var geometry_kind: String = ""
+var style_cache: Dictionary = {}
+var ui_redraw_time: float = 0
 var visible_world: Rect2
 var buttons: Array[Dictionary] = []
 const BG := Color("101922")
@@ -18,6 +23,9 @@ const PURPLE := Color("bda1ed")
 func _ready() -> void:
 	if surface != "world":
 		return
+	geometry_root = Node2D.new()
+	geometry_root.z_index = -10
+	add_child(geometry_root)
 	var layer := CanvasLayer.new()
 	layer.layer = 10
 	add_child(layer)
@@ -27,6 +35,13 @@ func _ready() -> void:
 	layer.add_child(overlay)
 
 func _draw() -> void:
+	if surface == "geometry":
+		visible_world = geometry.rect.grow(160)
+		if geometry_kind == "room":
+			draw_room_geometry(geometry)
+		else:
+			draw_corridor_geometry(geometry)
+		return
 	if surface == "world":
 		if not game.rooms.is_empty() and game.state != "title" and not (game.state == "guide" and game.return_state == "title"):
 			var size: Vector2 = Vector2(1280, 720) / game.camera.zoom
@@ -44,6 +59,7 @@ func _draw() -> void:
 	match game.state:
 		"dialogue": story()
 		"shop": shop()
+		"skill": skill_reward()
 		"inventory": inventory()
 		"npc": npc_panel()
 		"paused", "dead", "won": ending_panel()
@@ -53,6 +69,8 @@ func _draw() -> void:
 		var width: float = minf(1120, game.font.get_string_size(game.message, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 44)
 		box(Rect2(640 - width / 2, 675, width, 32), Color("263d3a"), MINT, 8)
 		center(game.message, Vector2(640, 697), 17, WHITE)
+	if game.show_fps:
+		micro("%d FPS" % Engine.get_frames_per_second(), Vector2(1100, 83), MINT, 9)
 
 func text(value: String, p: Vector2, size: int = 18, color: Color = WHITE, heavy: bool = false) -> void:
 	draw_string(game.bold if heavy else game.font, p, value, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
@@ -68,7 +86,7 @@ func paragraph(value: String, p: Vector2, width: float, size: int = 18, color: C
 	var line: String = ""
 	var row: int = 0
 	for character in value:
-		if character == "\n" or game.font.get_string_size(line + character, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > width:
+		if character == "\n" or game.font.get_string_size(line + character, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > width and character not in "。，！？、；：":
 			text(line, p + Vector2(0, row * (size + 8)), size, color)
 			line = ""
 			row += 1
@@ -79,11 +97,15 @@ func paragraph(value: String, p: Vector2, width: float, size: int = 18, color: C
 	text(line, p + Vector2(0, row * (size + 8)), size, color)
 
 func box(rect: Rect2, fill: Color = PANEL, edge: Color = LINE, radius: int = 10) -> void:
-	var style := StyleBoxFlat.new()
-	style.bg_color = fill
-	style.border_color = edge
-	style.set_border_width_all(1)
-	style.set_corner_radius_all(radius)
+	var key: Array = [fill, edge, radius]
+	if not style_cache.has(key):
+		var created := StyleBoxFlat.new()
+		created.bg_color = fill
+		created.border_color = edge
+		created.set_border_width_all(1)
+		created.set_corner_radius_all(radius)
+		style_cache[key] = created
+	var style: StyleBoxFlat = style_cache[key]
 	draw_style_box(style, rect)
 
 func button(rect: Rect2, label: String, action: String, index: int = 0, primary: bool = false, enabled: bool = true) -> void:
@@ -146,7 +168,13 @@ func item_icon(id: String, p: Vector2, scale_value: float = 1.0, angle: float = 
 func npc_art(index: int, p: Vector2, scale_value: float = 1) -> void:
 	shadow(p, 18 * scale_value)
 	var talking: bool = game.state == "npc" and game.selected_npc == index
-	sprite(game.cast_atlas, index * 2 + (1 if talking and int(game.clock * 2) % 2 == 0 else 0), p, 68 * scale_value)
+	var pose: int = 1 if talking and int(game.clock * 2) % 2 == 0 else 0
+	if index == 3:
+		sprite(game.basan_atlas, pose, p, 68 * scale_value)
+	elif index == 7:
+		sprite(game.jiahao_atlas, pose, p, 68 * scale_value)
+	else:
+		sprite(game.cast_atlas, index * 2 + pose, p, 68 * scale_value)
 
 func enemy_art(enemy: Dictionary) -> void:
 	var p: Vector2 = enemy.p
@@ -154,16 +182,19 @@ func enemy_art(enemy: Dictionary) -> void:
 		stamp(6, p, Vector2.ONE * (46 + enemy.age * 25), 0, Color(1, 0.65, 0.7, 0.8))
 		return
 	shadow(p, enemy.radius)
-	var row: int = {"slime":0, "ranged":1, "charger":2, "boss":3}[enemy.kind]
-	var pose: int = 3 if enemy.flash > 0 else (2 if enemy.windup > 0 or enemy.charge > 0 else int(enemy.age * 5) % 2)
-	var height: float = 45 if enemy.kind == "slime" else 54
-	if enemy.kind == "boss":
-		row = 2 if game.floor_index == 0 else (1 if game.floor_index == 1 else 3)
-		height = 110
-
-	sprite(game.enemy_atlas, row * 4 + pose, p, height, false, 0, Color("fff0d2") if enemy.flash > 0 else Color.WHITE)
+	if enemy.kind == "shark":
+		var pose: int = 3 if enemy.charge > 0 or enemy.flash > 0 else (2 if enemy.windup > 0 else int(enemy.age * 4) % 2)
+		sprite(game.shark_atlas, pose, p, 120, false, 0, Color("fff0d2") if enemy.flash > 0 else Color.WHITE)
+	else:
+		var row: int = {"slime":0, "ranged":1, "charger":2, "boss":3}[enemy.kind]
+		var pose: int = 3 if enemy.flash > 0 else (2 if enemy.windup > 0 or enemy.charge > 0 else int(enemy.age * 5) % 2)
+		var height: float = 45 if enemy.kind == "slime" else 54
+		if enemy.kind == "boss":
+			row = 2 if game.floor_index == 0 else (1 if game.floor_index == 1 else 3)
+			height = 110
+		sprite(game.enemy_atlas, row * 4 + pose, p, height, false, 0, Color("fff0d2") if enemy.flash > 0 else Color.WHITE)
 	if enemy.hp < enemy.max_hp:
-		var width: float = 64 if enemy.kind == "boss" else 32
+		var width: float = 64 if game.is_boss(enemy) else 32
 		box(Rect2(p.x - width / 2, p.y + 8, width, 4), BG, BG, 2)
 		draw_rect(Rect2(p.x - width / 2, p.y + 8, width * maxf(0, enemy.hp / enemy.max_hp), 4), RED)
 
@@ -215,16 +246,62 @@ func room_walls(room: Dictionary) -> void:
 	for corner in [rect.position, Vector2(rect.end.x, rect.position.y), rect.end, Vector2(rect.position.x, rect.end.y)]:
 		if visible_world.has_point(corner):
 			stamp(10, corner, Vector2(36, 42))
-	for direction in range(4):
-		if room.links[direction] >= 0 and visible_world.has_point(room.doors[direction]):
-			var locked: bool = room.started and not room.cleared
-			stamp(11 if locked else 12, room.doors[direction], Vector2(178, 116), 0 if direction % 2 == 0 else PI / 2)
+
+func rebuild_geometry() -> void:
+	# Retained per-room commands let Godot cull rooms without repainting every floor tile.
+	for child in geometry_root.get_children():
+		geometry_root.remove_child(child)
+		child.queue_free()
+	for kind in ["hall", "room"]:
+		for entry in game.corridors if kind == "hall" else game.rooms:
+			var piece: Node2D = get_script().new()
+			piece.surface = "geometry"
+			piece.geometry_kind = kind
+			piece.geometry = entry
+			piece.game = game
+			geometry_root.add_child(piece)
+
+func refresh_ui(delta: float) -> void:
+	ui_redraw_time -= delta
+	if game.state != "playing" or ui_redraw_time <= 0:
+		queue_redraw()
+		ui_redraw_time = 1.0 / 30.0
+
+func draw_room_geometry(room: Dictionary) -> void:
+	tiles(room.rect, game.floor_index)
+	room_walls(room)
+	for p in [room.rect.position + Vector2(95, 112), room.rect.end - Vector2(95, 20)]:
+		sprite(game.environment_atlas, 4 if game.floor_index == 0 else (6 if game.floor_index == 1 else 7), p, 75)
+
+func draw_corridor_geometry(hall: Dictionary) -> void:
+	var rect: Rect2 = hall.rect
+	tiles(rect, game.floor_index, 128, Color(0.72, 0.74, 0.77))
+	if hall.direction == 1:
+		wall_segment(Rect2(rect.position + Vector2(64, -28), Vector2(rect.size.x - 128, 28)))
+		wall_segment(Rect2(rect.position + Vector2(64, rect.size.y), Vector2(rect.size.x - 128, 28)))
+	else:
+		wall_segment(Rect2(rect.position + Vector2(-28, 64), Vector2(28, rect.size.y - 128)))
+		wall_segment(Rect2(rect.position + Vector2(rect.size.x, 64), Vector2(28, rect.size.y - 128)))
+
+func combat_barriers() -> void:
+	# Only a small raster warning remains while a fight seals the passage.
+	for rect in game.closed_gates():
+		if visible_world.intersects(rect):
+			var horizontal: bool = rect.size.x > rect.size.y
+			for i in range(4):
+				var p: Vector2 = rect.get_center() + (Vector2.RIGHT if horizontal else Vector2.DOWN) * (i - 1.5) * 40
+				stamp(4, p, Vector2(36, 22), PI if horizontal else PI / 2, Color(1, 0.55, 0.55, 0.65))
+
+func cover_draw_rect(rect: Rect2) -> Rect2:
+	var frame: Dictionary = game.environment_atlas.frames[5 + game.floor_index]
+	var width: float = rect.size.x + 8
+	var size: Vector2 = frame.bounds.size * width / frame.bounds.size.x
+	return Rect2(Vector2(rect.get_center().x - size.x / 2, rect.end.y - size.y), size)
 
 func cover_art(rect: Rect2) -> void:
-	var index: int = 5 + game.floor_index
-	var frame: Dictionary = game.environment_atlas.frames[index]
+	var frame: Dictionary = game.environment_atlas.frames[5 + game.floor_index]
 	var bounds := Rect2(frame.region.position + frame.bounds.position, frame.bounds.size)
-	draw_texture_rect_region(game.environment_atlas.texture, Rect2(rect.position - Vector2(3, 14), rect.size + Vector2(6, 14)), bounds)
+	draw_texture_rect_region(game.environment_atlas.texture, cover_draw_rect(rect), bounds)
 
 func title_screen() -> void:
 	micro("YICHUAN / PRINCESS RESCUE", Vector2(68, 55), MINT, 9)
@@ -273,25 +350,11 @@ func title_screen() -> void:
 	text("最高累计积分 %d  ·  通关层数 %d / 3" % [game.best_score, game.best_floor], Vector2(884, 708), 14, MUTED)
 
 func arena() -> void:
-	for hall in game.corridors:
-		var rect: Rect2 = hall.rect
-		if not visible_world.intersects(rect.grow(40)):
-			continue
-		tiles(rect, game.floor_index, 128, Color(0.72, 0.74, 0.77))
-		if hall.direction == 1:
-			wall_segment(Rect2(rect.position + Vector2(64, -28), Vector2(rect.size.x - 128, 28)))
-			wall_segment(Rect2(rect.position + Vector2(64, rect.size.y), Vector2(rect.size.x - 128, 28)))
-		else:
-			wall_segment(Rect2(rect.position + Vector2(-28, 64), Vector2(28, rect.size.y - 128)))
-			wall_segment(Rect2(rect.position + Vector2(rect.size.x, 64), Vector2(28, rect.size.y - 128)))
+	var player_p: Vector2 = game.render_position(game.player, game.previous_player)
+	combat_barriers()
 	for room in game.rooms:
 		if not visible_world.intersects(room.rect.grow(140)):
 			continue
-		tiles(room.rect, game.floor_index)
-		room_walls(room)
-		var corner_props: Array[Vector2] = [room.rect.position + Vector2(95, 112), room.rect.end - Vector2(95, 20)]
-		for p in corner_props:
-			sprite(game.environment_atlas, 4 if game.floor_index == 0 else (6 if game.floor_index == 1 else 7), p, 75)
 		if room.cleared:
 			terminal(room)
 		if room.type == "npc" and room.npc >= 0:
@@ -310,22 +373,26 @@ func arena() -> void:
 				if not game.line_clear(enemy.p, p):
 					break
 				stamp(4, p, Vector2(62, 27), aim.angle(), Color(1, 1, 1, 0.3 + enemy.windup * 0.35))
-			if enemy.kind == "boss":
+			if game.is_boss(enemy):
 				stamp(6, enemy.p, Vector2.ONE * 140, game.clock * 0.4, Color(1, 0.6, 0.7, 0.65))
-	var actors: Array[Dictionary] = game.enemies.duplicate()
-	actors.append({"kind":"hero", "p":game.player})
+	var actors: Array[Dictionary] = []
+	for enemy in game.enemies:
+		var drawn: Dictionary = enemy.duplicate()
+		drawn.p = game.render_position(enemy.p, enemy.get("previous_p", enemy.p))
+		actors.append(drawn)
+	actors.append({"kind":"hero", "p":player_p})
 	for rect in game.obstacles:
 		if visible_world.intersects(rect.grow(50)):
 			actors.append({"kind":"cover", "p":rect.end, "rect":rect})
 	if game.knight_active:
-		actors.append({"kind":"knight", "p":game.knight})
+		actors.append({"kind":"knight", "p":game.render_position(game.knight, game.previous_knight)})
 	actors.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.p.y < b.p.y)
 	for actor in actors:
 		if actor.kind == "hero":
 			# The silhouette remains visible during damage immunity.
-			hero(game.player, 0.9, game.facing, game.player_moving, Color(1, 0.8, 0.8) if game.invulnerable > 0 and int(game.clock * 16) % 2 == 0 else Color.WHITE)
+			hero(actor.p, 0.9, game.facing, game.player_moving, Color(1, 0.8, 0.8) if game.invulnerable > 0 and int(game.clock * 16) % 2 == 0 else Color.WHITE)
 			if game.shield_time > 0:
-				stamp(5, game.player + Vector2(0, -25), Vector2.ONE * 90, 0, Color(1, 1, 1, 0.8))
+				stamp(5, player_p + Vector2(0, -25), Vector2.ONE * 90, 0, Color(1, 1, 1, 0.8))
 		elif actor.kind == "cover":
 			shadow(actor.p - Vector2(actor.rect.size.x / 2, 0), actor.rect.size.x * 0.6)
 			cover_art(actor.rect)
@@ -337,11 +404,11 @@ func arena() -> void:
 		var weapon: Dictionary = game.weapons[i]
 		var angle: float = TAU * i / maxi(1, game.weapons.size()) + game.clock * 0.16
 		var recoil: float = float(weapon.get("recoil", 0.0)) / 0.16
-		var p: Vector2 = game.player + Vector2.from_angle(angle) * 36 + Vector2(0, -22) - weapon.aim * recoil * 7
+		var p: Vector2 = player_p + Vector2.from_angle(angle) * 36 + Vector2(0, -22) - weapon.aim * recoil * 7
 		item_icon(weapon.id, p, 0.57, weapon.aim.angle() + PI / 4 - recoil * 0.16)
 	for shot in game.projectiles:
 		var index: int = 0 if shot.friendly else (13 if game.floor_index == 2 else 1)
-		stamp(index, shot.p + Vector2(0, -16), Vector2(26, 12) if shot.friendly else Vector2(29, 24), shot.velocity.angle())
+		stamp(index, game.render_position(shot.p, shot.get("previous_p", shot.p)) + Vector2(0, -16), Vector2(26, 12) if shot.friendly else Vector2(29, 24), shot.velocity.angle())
 	for effect in game.effects:
 		var progress: float = clampf(1.0 - effect.life / effect.max_life, 0, 0.999)
 		var alpha: float = minf(1, effect.life / effect.max_life * 2)
@@ -360,20 +427,20 @@ func arena() -> void:
 	for entry in game.texts:
 		center(entry.text, entry.p, 17, Color(entry.color, minf(1, entry.life * 2)), true)
 	if game.speech_time > 0:
-		center(game.speech, game.player + Vector2(0, -82), 16, WHITE, true)
+		center(game.speech, player_p + Vector2(0, -82), 16, WHITE, true)
 
 func alpha_tint(alpha: float) -> Color:
 	return Color(1, 1, 1, alpha)
 
 func terminal(room: Dictionary) -> void:
-	if room.type not in ["shop", "treasure", "rest", "boss"]:
+	if room.type not in ["shop", "treasure", "rest", "boss"] and not room.get("reward_shop", false):
 		return
 	var p: Vector2 = room.center
 	var label: String = "E 补给"
 	var prop: int = 10
 	match room.type:
 		"boss":
-			label = "E 下一层"
+			label = "E 技能提升"
 			stamp(6, p, Vector2.ONE * 96, game.clock * 0.2)
 			prop = -1
 		"treasure":
@@ -382,7 +449,7 @@ func terminal(room: Dictionary) -> void:
 		"rest":
 			label = "已休息" if room.used else "E 休息"
 			prop = 11
-		"shop": label = "E 商店"
+		"shop", "combat", "elite": label = "E 商店"
 	if prop >= 0:
 		shadow(p + Vector2(0, 10), 30)
 		sprite(game.environment_atlas, prop, p + Vector2(0, 6), 66)
@@ -426,10 +493,10 @@ func hud() -> void:
 	if game.assisted:
 		micro("DEBUG", Vector2(267, 42), RED, 8)
 	for enemy in game.enemies:
-		if enemy.kind == "boss":
+		if game.is_boss(enemy):
 			box(Rect2(390, 65, 500, 27), Color(0.1, 0.06, 0.1, 0.88), Color("8c545e"), 7)
 			draw_rect(Rect2(398, 85, 484 * maxf(0, enemy.hp / enemy.max_hp), 3), RED)
-			center(game.Data.BOSS_NAMES[game.floor_index], Vector2(640, 81), 14, WHITE)
+			center(game.boss_name(enemy), Vector2(640, 81), 14, WHITE)
 			break
 
 func story() -> void:
@@ -451,9 +518,9 @@ func shop() -> void:
 	scrim()
 	box(Rect2(83, 63, 1114, 580), PANEL, LINE, 18)
 	micro("SUPPLY / BUILD YOUR LOADOUT", Vector2(117, 100), GOLD)
-	text("积分补给站", Vector2(116, 143), 34, WHITE, true)
+	text("战后补给" if game.current_room().get("reward_shop", false) else "积分补给站", Vector2(116, 143), 34, WHITE, true)
 	text("余额 %d 积分" % game.points, Vector2(914, 140), 25, GOLD, true)
-	text("同名同品质可合并 · 每类 6 个栏位 · 离开商店后物资仍保留", Vector2(117, 179), 17, MUTED)
+	text("同名同品质可合并 · 满栏时自动合并 · 每类 6 个栏位", Vector2(117, 179), 17, MUTED)
 	if game.current_room().type == "shop":
 		text("商店房专享 85 折", Vector2(942, 179), 16, MINT)
 	for i in range(game.stock.size()):
@@ -462,16 +529,32 @@ func shop() -> void:
 		var color: Color = game.Data.TIER_COLORS[offer.tier - 1]
 		var rect := Rect2(116 + i * 266, 208, 250, 310)
 		box(rect, Color("13232c"), color.darkened(0.4), 12)
-		text("%d  /  %s" % [i + 1, game.Data.TIER_NAMES[offer.tier - 1]], rect.position + Vector2(18, 30), 15, color)
+		text("%d / %s · %s" % [i + 1, game.Data.TIER_NAMES[offer.tier - 1], "武器" if spec.kind == "weapon" else "装备"], rect.position + Vector2(18, 30), 15, color)
 		draw_circle(rect.position + Vector2(125, 92), 43, Color(spec.color, 0.08))
 		item_icon(offer.id, rect.position + Vector2(125, 92), 1.5)
 		text(spec.name, rect.position + Vector2(18, 164), 24, WHITE, true)
 		text(spec.tag, rect.position + Vector2(18, 194), 16, color)
 		paragraph(spec.desc, rect.position + Vector2(18, 226), 214, 15, MUTED, 2)
 		button(Rect2(rect.position + Vector2(16, 259), Vector2(218, 35)), "已购入" if offer.sold else "购买 · %d 积分" % game.shop_price(offer), "buy", i, not offer.sold, not offer.sold)
-	button(Rect2(117, 547, 270, 49), "刷新 · %d 积分 / R" % game.refresh_price(), "refresh")
+	button(Rect2(117, 547, 270, 49), "首次免费刷新 · R" if game.refresh_price() == 0 else "刷新 · %d 积分 / R" % game.refresh_price(), "refresh", 0, game.refresh_price() == 0)
 	button(Rect2(407, 547, 270, 49), "整理背包 / 合并 · Tab", "inventory")
 	button(Rect2(884, 547, 280, 49), "继续探索 · Esc", "close_shop", 0, true)
+
+func skill_reward() -> void:
+	scrim()
+	text("关卡通关 · 技能提升", Vector2(148, 144), 38, WHITE, true)
+	text("选择一项，本局持续生效", Vector2(150, 184), 20, MINT)
+	for i in range(game.skill_offers.size()):
+		var spec: Dictionary = game.skill_offers[i]
+		var level: int = game.skill_level(spec.id)
+		var rect := Rect2(148 + i * 336, 223, 312, 340)
+		box(rect, PANEL, MINT.darkened(0.35), 14)
+		item_icon(spec.icon, rect.position + Vector2(156, 78), 1.8)
+		center(spec.name, rect.position + Vector2(156, 156), 28, WHITE, true)
+		center("Lv.%d → Lv.%d" % [level, level + 1], rect.position + Vector2(156, 190), 18, GOLD)
+		paragraph(spec.desc, rect.position + Vector2(24, 228), 264, 18, MUTED, 3)
+		button(Rect2(rect.position + Vector2(24, 281), Vector2(264, 39)), "选择 · %d" % (i + 1), "skill_choice", i, true)
+	center("选择后" + ("救回公主" if game.floor_index == 2 else "进入下一层"), Vector2(640, 618), 18, MUTED)
 
 func inventory() -> void:
 	scrim()
@@ -501,6 +584,12 @@ func inventory() -> void:
 			var can_fuse: bool = game.fusion_pair(kind, i) >= 0
 			button(Rect2(rect.position + Vector2(10, 117), Vector2(151, 29)), "合并升级 ↑" if can_fuse else ("已达传说" if entry.tier == 4 else "等待相同物品"), "fuse_" + kind, i, can_fuse, can_fuse)
 			button(Rect2(rect.position + Vector2(10, 153), Vector2(151, 29)), "出售 +%d" % game.sell_price(entry), "sell_" + kind, i, false, row != 0 or entries.size() > 1)
+	var learned: PackedStringArray = []
+	for spec in game.Data.SKILLS:
+		if game.skill_level(spec.id) > 0:
+			learned.append("%s Lv.%d" % [spec.name, game.skill_level(spec.id)])
+	if not learned.is_empty():
+		text("技能：" + "  ·  ".join(learned), Vector2(95, 641), 15, MINT)
 
 func npc_panel() -> void:
 	scrim()
@@ -543,13 +632,13 @@ func guide() -> void:
 	button(Rect2(956, 93, 160, 41), "返回 · Esc", "close_guide")
 	var lines: Array[String] = [
 		"WASD / 方向键：四向移动　　空格 / Shift：无敌冲刺　　攻击自动瞄准并释放。",
-		"大小房间通过真实走廊连接，镜头跟随移动。走进战斗房会封门，清空后可沿原路返回。",
-		"击杀掉落积分，靠近自动拾取；清房自动收集。仅商店房或硬币游商出售物资。",
-		"商店房打 85 折；宝库赠送精良武器；咖啡驿站恢复生命，单间只可领取一次。",
+		"大小房间通过真实走廊连接，镜头跟随移动。走进战斗房会封路，清空后可沿原路返回。",
+		"每间怪物房清空后自动进入商店，两张武器、两张装备；首刷免费，之后付费。",
+		"商店房打 85 折；嘉豪可改装武器；精英房最后一波由大鲨鱼守关。",
 		"Esc 暂停并整理背包：两件同名同品质合并一级，最高传说。每类最多装 6 件。",
 		"每层 NPC 房与商店房合计随机 0–1 间，其余以战斗房为主；罗德委托在下一场战斗触发。",
 		"海德骑士在当前层跟随作战，换房仍跟随，进入下一层后离队。哈少解锁 Q 护盾。",
-		"击败每层首领，在中央传送门按 E 换层。第三层击败策划杨梓亮，救回 ChatGPT 公主。",
+		"击败关底首领后，按 1–3 选择技能提升，再进入下一层；最终救回 ChatGPT 公主。",
 		"Esc / Tab 背包与暂停　F1 手册　M 静音　F11 全屏　Home 调试选项。"
 	]
 	for i in range(lines.size()):
@@ -592,7 +681,8 @@ func click(p: Vector2) -> void:
 					game.state = "map"
 			"buy": game.buy(entry.index)
 			"refresh": game.refresh_shop()
-			"close_shop": game.state = game.shop_return
+			"close_shop": game.leave_shop()
+			"skill_choice": game.choose_skill(entry.index)
 			"fuse_weapon": game.fuse("weapon", entry.index)
 			"fuse_equipment": game.fuse("equipment", entry.index)
 			"sell_weapon": game.sell("weapon", entry.index)

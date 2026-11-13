@@ -7,6 +7,9 @@ const Audio = preload("res://scripts/audio.gd")
 const Atlas = preload("res://scripts/sprite_atlas.gd")
 var hero_atlas: RefCounted
 var cast_atlas: RefCounted
+var basan_atlas: RefCounted
+var jiahao_atlas: RefCounted
+var shark_atlas: RefCounted
 var item_atlas: RefCounted
 var enemy_atlas: RefCounted
 var environment_atlas: RefCounted
@@ -65,6 +68,10 @@ var message_time: float = 0.0
 var speech: String = ""
 var speech_time: float = 0.0
 var buff_damage: float = 0.0
+var skill_levels: Dictionary = {}
+var skill_offers: Array[Dictionary] = []
+var previous_player: Vector2 = Data.CENTER
+var previous_knight: Vector2 = Data.CENTER
 var knight_active: bool = false
 var knight: Vector2 = Data.CENTER + Vector2(-52, 0)
 var knight_cooldown: float = 0.0
@@ -85,6 +92,7 @@ var pixel: Font
 var audio: Node
 var view: Node2D
 var muted: bool = false
+var show_fps: bool = false
 
 func _ready() -> void:
 	var base: Font = load("res://assets/fonts/NotoSansSC.ttf")
@@ -100,6 +108,9 @@ func _ready() -> void:
 	pixel = load("res://assets/fonts/PressStart2P.ttf")
 	hero_atlas = Atlas.new(load("res://assets/generated/dungeon/hero.png"), 4, 4, true)
 	cast_atlas = Atlas.new(load("res://assets/generated/dungeon/cast.png"), 4, 4)
+	basan_atlas = Atlas.new(load("res://assets/generated/dungeon/basan.png"), 2, 1)
+	jiahao_atlas = Atlas.new(load("res://assets/generated/dungeon/jiahao.png"), 2, 1)
+	shark_atlas = Atlas.new(load("res://assets/generated/dungeon/big-shark.png"), 2, 2)
 	item_atlas = Atlas.new(load("res://assets/generated/dungeon/items.png"), 4, 3)
 	enemy_atlas = Atlas.new(load("res://assets/generated/dungeon/enemies.png"), 4, 4)
 	environment_atlas = Atlas.new(load("res://assets/generated/dungeon/environment-office.png"), 4, 3)
@@ -143,6 +154,8 @@ func start_run(chosen_seed: int = 0, skip_story: bool = false) -> void:
 	cleared_count = 0
 	run_time = 0
 	buff_damage = 0
+	skill_levels.clear()
+	skill_offers.clear()
 	onion_skill = false
 	onion_cooldown = 0
 	shield_time = 0
@@ -176,6 +189,7 @@ func generate_floor() -> void:
 	obstacles.clear()
 	for room in rooms:
 		obstacles.append_array(room.obstacles)
+	view.rebuild_geometry()
 	knight_active = false
 	enter_room(0)
 	notify(Data.FLOOR_NAMES[floor_index])
@@ -187,6 +201,8 @@ func room_center() -> Vector2:
 	return current_room().center if not rooms.is_empty() else Data.CENTER
 
 func camera_snap() -> void:
+	previous_player = player
+	previous_knight = knight
 	camera.position = player
 	camera.offset = Vector2.ZERO
 	camera_shake = 0
@@ -270,11 +286,13 @@ func point_on_floor(p: Vector2) -> bool:
 	return false
 
 func walkable(p: Vector2, radius: float = 13.0) -> bool:
-	if not point_on_floor(p):
-		return false
-	for direction in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN, Vector2(0.707, 0.707), Vector2(-0.707, 0.707), Vector2(0.707, -0.707), Vector2(-0.707, -0.707)]:
-		if not point_on_floor(p + direction * radius):
+	# Interior circles are fully inside this rectangle; only boundaries need union tests.
+	if rooms.is_empty() or not current_room().rect.grow(-radius).has_point(p):
+		if not point_on_floor(p):
 			return false
+		for direction in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN, Vector2(0.707, 0.707), Vector2(-0.707, 0.707), Vector2(0.707, -0.707), Vector2(-0.707, -0.707)]:
+			if not point_on_floor(p + direction * radius):
+				return false
 	for rect in obstacles:
 		if rect.grow(radius).has_point(p):
 			return false
@@ -286,7 +304,7 @@ func walkable(p: Vector2, radius: float = 13.0) -> bool:
 func nav_cell(p: Vector2) -> Vector2i:
 	return Vector2i(floori(p.x / 20), floori(p.y / 20))
 
-func build_navigation() -> void:
+func build_navigation(clearance: float = 19.0) -> void:
 	var bounds: Rect2 = current_room().rect.grow(40)
 	var first: Vector2i = nav_cell(bounds.position)
 	var last: Vector2i = nav_cell(bounds.end) + Vector2i.ONE
@@ -298,7 +316,7 @@ func build_navigation() -> void:
 	for y in range(first.y, last.y):
 		for x in range(first.x, last.x):
 			var p := Vector2(x * 20 + 10, y * 20 + 10)
-			if not walkable(p, 19):
+			if not walkable(p, clearance):
 				nav.set_point_solid(Vector2i(x, y))
 
 func slide(p: Vector2, motion: Vector2, radius: float = 13.0) -> Vector2:
@@ -306,17 +324,19 @@ func slide(p: Vector2, motion: Vector2, radius: float = 13.0) -> Vector2:
 	var steps: int = maxi(1, int(ceil(motion.length() / 7.0)))
 	var step: Vector2 = motion / steps
 	for i in range(steps):
-		if walkable(p + Vector2(step.x, 0), radius):
+		if step.x != 0 and walkable(p + Vector2(step.x, 0), radius):
 			p.x += step.x
-		if walkable(p + Vector2(0, step.y), radius):
+		if step.y != 0 and walkable(p + Vector2(0, step.y), radius):
 			p.y += step.y
 	return p
 
 func line_clear(a: Vector2, b: Vector2) -> bool:
-	var steps: int = maxi(1, ceili(a.distance_to(b) / 20))
-	for i in range(steps + 1):
-		if not point_on_floor(a.lerp(b, float(i) / steps)):
-			return false
+	# A segment between two points in the same rectangular room cannot leave its floor.
+	if rooms.is_empty() or not (current_room().rect.has_point(a) and current_room().rect.has_point(b)):
+		var steps: int = maxi(1, ceili(a.distance_to(b) / 20))
+		for i in range(steps + 1):
+			if not point_on_floor(a.lerp(b, float(i) / steps)):
+				return false
 	var blockers: Array[Rect2] = obstacles.duplicate()
 	blockers.append_array(closed_gates())
 	for rect in blockers:
@@ -329,11 +349,17 @@ func _process(delta: float) -> void:
 	message_time = maxf(0, message_time - delta)
 	view.queue_redraw()
 	if view.overlay != null:
-		view.overlay.queue_redraw()
+		view.overlay.refresh_ui(delta)
 
 func _physics_process(delta: float) -> void:
 	if state != "playing":
 		return
+	previous_player = player
+	previous_knight = knight
+	for enemy in enemies:
+		enemy.previous_p = enemy.p
+	for shot in projectiles:
+		shot.previous_p = shot.p
 	run_time += delta
 	room_time += delta
 	invulnerable = maxf(0, invulnerable - delta)
@@ -344,7 +370,7 @@ func _physics_process(delta: float) -> void:
 	door_cooldown = maxf(0, door_cooldown - delta)
 	interaction_cooldown = maxf(0, interaction_cooldown - delta)
 	speech_time = maxf(0, speech_time - delta)
-	health = minf(max_health(), health + equipment_stat("coffee") * 0.5 * delta)
+	health = minf(max_health(), health + (equipment_stat("coffee") + skill_level("recovery")) * 0.5 * delta)
 	var motion: Vector2 = Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	player_moving = motion.length_squared() > 0.01
 	if player_moving:
@@ -395,20 +421,21 @@ func start_dash() -> void:
 		return
 	dash_direction = facing
 	dash_time = 0.17
-	dash_cooldown = 1.8
+	dash_cooldown = 1.8 / (1.0 + skill_level("dash") * 0.2)
 	invulnerable = maxf(invulnerable, 0.24)
 	audio.sfx("dash")
 
 func use_onion() -> void:
 	if state != "playing" or not onion_skill or onion_cooldown > 0:
 		return
-	onion_cooldown = 10
-	shield_time = 2
+	var level: int = skill_level("onion")
+	onion_cooldown = 10.0 / (1.0 + level * 0.15)
+	shield_time = 2.0 + level * 0.4
 	for enemy in enemies.duplicate():
-		if enemy.p.distance_to(player) < 165:
-			hit_enemy(enemy, 24 * damage_scale(), player)
-	add_effect("burst", player, player, Color.WHITE, 0.5, 280)
-	notify("哈少的洋葱守护 · 2 秒护盾")
+		if enemy.p.distance_to(player) < 165 + level * 20:
+			hit_enemy(enemy, (24 + level * 10) * damage_scale(), player)
+	add_effect("burst", player, player, Color.WHITE, 0.5, 280 + level * 35)
+	notify("洋葱守护 · %.1f 秒护盾" % shield_time)
 	audio.sfx("skill")
 
 func spawn_wave() -> void:
@@ -416,31 +443,45 @@ func spawn_wave() -> void:
 		return
 	wave += 1
 	wave_wait = 0
+	if current_room().type == "elite" and wave == wave_total:
+		spawn_enemy(spawn_point(50), "shark")
+		build_navigation(35)
+		notify("精英首领 · 大鲨鱼")
+		return
 	var count: int = 4 + floor_index * 2 + wave * 2 + (2 if current_room().type == "elite" else 0)
 	for i in range(count):
 		var kind: String = "ranged" if i % 4 == 3 else ("charger" if i % 5 == 4 else "slime")
 		spawn_enemy(spawn_point(), kind)
 	notify("%s · 第 %d / %d 波" % [Data.ROOM_NAMES[current_room().type], wave, wave_total])
 
-func spawn_point() -> Vector2:
+func spawn_point(radius: float = 23.0) -> Vector2:
 	for attempt in range(150):
 		var p := Vector2(rng.randf_range(current_room().rect.position.x + 65, current_room().rect.end.x - 65), rng.randf_range(current_room().rect.position.y + 75, current_room().rect.end.y - 65))
-		if walkable(p, 23) and p.distance_to(player) > 230:
+		if walkable(p, radius) and p.distance_to(player) > 230:
 			return p
 	return room_center() + Vector2(220, 0) if player.x < room_center().x else room_center() - Vector2(220, 0)
 
 func spawn_enemy(p: Vector2, kind: String = "slime") -> Dictionary:
 	if current_room().type == "npc":
 		return {}
-	var is_boss: bool = kind == "boss"
-	var hp: float = (390 + floor_index * 260 if is_boss else 22 + floor_index * 13) * Data.DIFFICULTIES[run_difficulty].enemy
+	var boss_kind: bool = kind in ["boss", "shark"]
+	var hp: float = (390 + floor_index * 260 if boss_kind else 22 + floor_index * 13) * Data.DIFFICULTIES[run_difficulty].enemy
+	if kind == "shark":
+		hp = (270 + floor_index * 170) * Data.DIFFICULTIES[run_difficulty].enemy
 	if kind == "charger":
 		hp *= 1.5
-	if current_room().type == "elite" and not is_boss:
+	if current_room().type == "elite" and not boss_kind:
 		hp *= 1.35
-	var enemy: Dictionary = {"p":p, "kind":kind, "hp":hp, "max_hp":hp, "radius":29.0 if is_boss else 16.0, "speed":66.0 + floor_index * 12, "age":0.0, "cooldown":2.0 + rng.randf(), "windup":0.0, "aim":Vector2.RIGHT, "charge":0.0, "flash":0.0, "path":PackedVector2Array(), "path_time":0.0, "dead":false, "phase":0}
+	var enemy: Dictionary = {"p":p, "kind":kind, "hp":hp, "max_hp":hp, "radius":33.0 if kind == "shark" else (29.0 if boss_kind else 16.0), "speed":66.0 + floor_index * 12, "age":0.0, "cooldown":2.0 + rng.randf(), "windup":0.0, "aim":Vector2.RIGHT, "charge":0.0, "flash":0.0, "path":PackedVector2Array(), "path_time":0.0, "dead":false, "phase":0}
 	enemies.append(enemy)
+	enemy.previous_p = p
 	return enemy
+
+func is_boss(enemy: Dictionary) -> bool:
+	return enemy.kind in ["boss", "shark"]
+
+func boss_name(enemy: Dictionary) -> String:
+	return "大鲨鱼" if enemy.kind == "shark" else Data.BOSS_NAMES[floor_index]
 
 func target_near(p: Vector2, reach: float) -> Dictionary:
 	var result: Dictionary = {}
@@ -464,12 +505,12 @@ func update_enemies(delta: float) -> void:
 		var distance: float = offset.length()
 		enemy.cooldown -= delta
 		var speed: float = enemy.speed
-		if enemy.kind == "boss":
+		if is_boss(enemy):
 			if enemy.hp < enemy.max_hp * 0.5 and enemy.phase == 0:
 				enemy.phase = 1
-				notify("杨梓亮：再加一个小需求！" if floor_index == 2 else "首领进入狂暴阶段！")
+				notify("大鲨鱼进入狂暴阶段！" if enemy.kind == "shark" else ("杨梓亮：再加一个小需求！" if floor_index == 2 else "首领进入狂暴阶段！"))
 				enemy.cooldown = 0.1
-			speed = 52
+			speed = 82 + enemy.phase * 14 if enemy.kind == "shark" else 52
 			if enemy.cooldown <= 0 and enemy.windup <= 0:
 				enemy.windup = 0.85
 				enemy.aim = offset.normalized()
@@ -525,9 +566,16 @@ func update_enemies(delta: float) -> void:
 						separation += difference.normalized() * 20
 			enemy.p = slide(enemy.p, (direction * speed + separation) * delta, enemy.radius)
 		if enemy.p.distance_to(player) < enemy.radius + 12:
-			hurt(12 if enemy.kind == "boss" else 8, enemy.p)
+			hurt(12 if is_boss(enemy) else 8, enemy.p)
 
 func boss_attack(enemy: Dictionary) -> void:
+	if enemy.kind == "shark":
+		enemy.charge = 0.52 + enemy.phase * 0.12
+		var count: int = 5 + enemy.phase * 2
+		for i in range(count):
+			shoot(enemy.p, enemy.aim.rotated((i - (count - 1) * 0.5) * 0.18) * 225, 11 + floor_index * 2, false, Color("8fcfff"))
+		add_effect("burst", enemy.p, enemy.p, Color.WHITE, 0.4, 130)
+		return
 	var count: int = 10 + floor_index * 2 + enemy.phase * 4
 	for i in range(count):
 		var direction: Vector2 = Vector2.from_angle(TAU * i / count + room_time * 0.25)
@@ -606,7 +654,7 @@ func update_knight(delta: float) -> void:
 func shoot(p: Vector2, velocity: Vector2, damage: float, friendly: bool, color: Color, pierce: int = 0, life: float = 1.8) -> void:
 	if friendly:
 		add_effect("muzzle", p, p + velocity.normalized(), Color.WHITE, 0.1, 42)
-	projectiles.append({"p":p, "velocity":velocity, "damage":damage, "friendly":friendly, "color":color, "pierce":pierce, "life":life, "hit":[]})
+	projectiles.append({"p":p, "previous_p":p, "velocity":velocity, "damage":damage, "friendly":friendly, "color":color, "pierce":pierce, "life":life, "hit":[]})
 
 func update_projectiles(delta: float) -> void:
 	var active_shots: Array[Dictionary] = projectiles.duplicate()
@@ -647,18 +695,18 @@ func hit_enemy(enemy: Dictionary, damage: float, source: Vector2) -> void:
 	enemy.hp -= damage
 	enemy.flash = 0.12
 	add_effect("impact", enemy.p + Vector2(0, -18), enemy.p + (enemy.p - source).normalized(), Color.WHITE, 0.26, 60)
-	camera_shake = maxf(camera_shake, 1.8 if enemy.kind != "boss" else 3.0)
+	camera_shake = maxf(camera_shake, 1.8 if not is_boss(enemy) else 3.0)
 	texts.append({"p":enemy.p + Vector2(-10, -28), "text":str(int(ceil(damage))), "color":Color("ffe2b3"), "life":0.65})
-	if enemy.kind != "boss":
+	if not is_boss(enemy):
 		enemy.p = slide(enemy.p, (enemy.p - source).normalized() * 11, enemy.radius)
 	if enemy.hp <= 0:
 		enemy.dead = true
 		kills += 1
-		var reward: int = 60 if enemy.kind == "boss" else (5 if enemy.kind == "charger" else 3)
+		var reward: int = 60 if is_boss(enemy) else (5 if enemy.kind == "charger" else 3)
 		drops.append({"p":enemy.p, "value":reward, "age":0.0})
 		add_effect("burst", enemy.p + Vector2(0, -16), enemy.p, Color.WHITE, 0.35, 75)
 		enemies.erase(enemy)
-		if enemy.kind == "boss":
+		if is_boss(enemy):
 			for other in enemies:
 				other.dead = true
 			enemies.clear()
@@ -720,16 +768,15 @@ func clear_room() -> void:
 	else:
 		notify("战区已清空 · 积分已收集 · 所有出口开启")
 	if room.type == "boss":
-		if floor_index == 2:
-			dialogue_kind = "ending"
-			dialogue_index = 0
-			state = "dialogue"
-		else:
-			notify("首领已击败 · 到中央传送门按 E，进入下一层")
+		open_skill_reward()
+	elif room.type in ["combat", "elite"]:
+		room.reward_shop = true
+		open_shop()
+		notify("战后补给 · 首次刷新免费")
 	audio.sfx("repair")
 
 func max_health() -> float:
-	return float(Data.DIFFICULTIES[run_difficulty].health) + equipment_stat("heart") * 20
+	return float(Data.DIFFICULTIES[run_difficulty].health) + (equipment_stat("heart") + skill_level("vigor")) * 20
 
 func equipment_stat(id: String) -> float:
 	var result: float = 0
@@ -742,23 +789,89 @@ func move_speed() -> float:
 	return 220 * (1 + equipment_stat("boots") * 0.1)
 
 func damage_scale() -> float:
-	return 1 + buff_damage + equipment_stat("scope") * 0.15
+	return 1 + buff_damage + (equipment_stat("scope") + skill_level("power")) * 0.15
 
 func attack_speed() -> float:
-	return 1 + equipment_stat("chip") * 0.12
+	return 1 + (equipment_stat("chip") + skill_level("haste")) * 0.12
+
+func skill_level(id: String) -> int:
+	return int(skill_levels.get(id, 0))
+
+func open_skill_reward() -> void:
+	var room: Dictionary = current_room()
+	if room.type != "boss" or not room.cleared or room.skill_claimed:
+		return
+	if skill_offers.is_empty():
+		var pool: Array[Dictionary] = Data.SKILLS.duplicate()
+		var reward_rng := RandomNumberGenerator.new()
+		reward_rng.seed = seed_value + floor_index * 8191 + 707
+		for i in range(3):
+			var index: int = reward_rng.randi_range(0, pool.size() - 1)
+			skill_offers.append(pool[index])
+			pool.remove_at(index)
+	state = "skill"
+	notify("关卡通关 · 选择一项技能提升")
+
+func choose_skill(index: int) -> bool:
+	if state != "skill" or index < 0 or index >= skill_offers.size() or current_room().skill_claimed:
+		return false
+	var id: String = skill_offers[index].id
+	skill_levels[id] = skill_level(id) + 1
+	if id == "vigor":
+		health = minf(max_health(), health + 20)
+	elif id == "onion":
+		onion_skill = true
+		onion_cooldown = 0
+	current_room().skill_claimed = true
+	skill_offers.clear()
+	audio.sfx("skill")
+	state = "playing"
+	if floor_index < 2:
+		next_floor()
+	else:
+		dialogue_kind = "ending"
+		dialogue_index = 0
+		state = "dialogue"
+	return true
+
+func render_position(current: Vector2, previous: Vector2) -> Vector2:
+	# Immediate-mode drawings need interpolation too; Node2D interpolation only moves nodes.
+	if not is_physics_processing() or state != "playing":
+		return current
+	return previous.lerp(current, Engine.get_physics_interpolation_fraction())
+
+func can_add_item(id: String, tier: int = 1) -> bool:
+	var spec: Dictionary = Data.item(id)
+	if spec.is_empty() or tier < 1 or tier > 4:
+		return false
+	var inventory: Array[Dictionary] = weapons if spec.kind == "weapon" else equipment
+	if inventory.size() < 6:
+		return true
+	if tier < 4:
+		for entry in inventory:
+			if entry.id == id and entry.tier == tier:
+				return true
+	return false
 
 func add_item(id: String, tier: int = 1) -> bool:
 	var spec: Dictionary = Data.item(id)
 	if spec.is_empty() or tier < 1 or tier > 4:
 		return false
 	var inventory: Array[Dictionary] = weapons if spec.kind == "weapon" else equipment
-	if inventory.size() >= 6:
-		notify("%s栏已满 · Tab 合并或出售后再领取" % ("武器" if spec.kind == "weapon" else "装备"))
+	if not can_add_item(id, tier):
+		notify("%s栏已满 · 没有可合并的同名同品质物品" % ("武器" if spec.kind == "weapon" else "装备"))
 		return false
+	var auto_merge: bool = inventory.size() >= 6
 	var previous_max: float = max_health()
 	inventory.append({"id":id, "tier":tier, "cooldown":0.0, "aim":Vector2.RIGHT})
 	if id == "heart":
 		health += max_health() - previous_max
+	if auto_merge:
+		var index: int = inventory.size() - 1
+		while fusion_pair(spec.kind, index) >= 0:
+			index = merge_pair(spec.kind, index)
+		notify("自动合并 · %s %s" % [Data.TIER_NAMES[inventory[index].tier - 1], spec.name])
+		audio.sfx("repair")
 	return true
 
 func fusion_pair(kind: String, index: int) -> int:
@@ -773,20 +886,28 @@ func fusion_pair(kind: String, index: int) -> int:
 func fuse(kind: String, index: int) -> bool:
 	if state not in ["inventory", "shop"]:
 		return false
+	var merged: int = merge_pair(kind, index)
+	if merged < 0:
+		notify("需要两件同名、同品质物品；传说为最高品质")
+		return false
+	var inventory: Array[Dictionary] = weapons if kind == "weapon" else equipment
+	var entry: Dictionary = inventory[merged]
+	notify("合并成功 · %s %s" % [Data.TIER_NAMES[entry.tier - 1], Data.item(entry.id).name])
+	audio.sfx("repair")
+	return true
+
+func merge_pair(kind: String, index: int) -> int:
 	var inventory: Array[Dictionary] = weapons if kind == "weapon" else equipment
 	var partner: int = fusion_pair(kind, index)
 	if partner < 0:
-		notify("需要两件同名、同品质物品；传说为最高品质")
-		return false
+		return -1
 	var previous_max: float = max_health()
 	var entry: Dictionary = inventory[index]
 	entry.tier += 1
 	entry.cooldown = 0
 	inventory.remove_at(partner)
 	health = minf(health + maxf(0, max_health() - previous_max), max_health())
-	notify("合并成功 · %s %s" % [Data.TIER_NAMES[entry.tier - 1], Data.item(entry.id).name])
-	audio.sfx("repair")
-	return true
+	return index - 1 if partner < index else index
 
 func sell(kind: String, index: int) -> bool:
 	if state not in ["inventory", "shop"]:
@@ -813,7 +934,7 @@ func shop_price(entry: Dictionary) -> int:
 
 func has_shop() -> bool:
 	var room: Dictionary = current_room()
-	if room.type == "shop":
+	if room.type == "shop" or room.get("reward_shop", false) and room.cleared:
 		return true
 	return room.type == "npc" and room.npc >= 0 and room.npc < Data.NPCS.size() and Data.NPCS[room.npc].id == "coin"
 
@@ -827,14 +948,23 @@ func open_shop() -> void:
 		roll_stock()
 	stock = current_room().stock
 
+func leave_shop() -> void:
+	if state != "shop":
+		return
+	state = shop_return
+	interaction_cooldown = 0.25
+
 func roll_stock() -> void:
 	var room: Dictionary = current_room()
 	var shop_rng := RandomNumberGenerator.new()
 	shop_rng.seed = seed_value + floor_index * 8191 + room_id * 101 + room.refreshes * 100003
 	var offers: Array[Dictionary] = []
-	var pool: Array[Dictionary] = []
-	pool.assign(Data.WEAPONS + Data.EQUIPMENT)
+	var weapon_pool: Array[Dictionary] = []
+	var equipment_pool: Array[Dictionary] = []
+	weapon_pool.assign(Data.WEAPONS)
+	equipment_pool.assign(Data.EQUIPMENT)
 	for i in range(4):
+		var pool: Array[Dictionary] = weapon_pool if i < 2 else equipment_pool
 		var spec: Dictionary = pool[shop_rng.randi_range(0, pool.size() - 1)]
 		var tier: int = 1
 		if i == 0 and not weapons.is_empty():
@@ -842,7 +972,19 @@ func roll_stock() -> void:
 			tier = mini(3, weapons[0].tier)
 		elif floor_index > 0 and shop_rng.randf() < 0.25:
 			tier = 2
+		pool.erase(spec)
 		offers.append({"id":spec.id, "tier":tier, "sold":false})
+	if not room.stock.is_empty():
+		var same: bool = true
+		for i in range(4):
+			same = same and room.stock[i].id == offers[i].id and room.stock[i].tier == offers[i].tier
+		if same:
+			# Preserve useful matching copies, while guaranteeing a visibly new shelf.
+			var alternatives: Array[Dictionary] = []
+			for spec in Data.WEAPONS:
+				if spec.id != offers[0].id and spec.id != offers[1].id:
+					alternatives.append(spec)
+			offers[1].id = alternatives[shop_rng.randi_range(0, alternatives.size() - 1)].id
 	room.stock = offers
 	stock = room.stock
 
@@ -854,16 +996,19 @@ func buy(index: int) -> bool:
 	if points < price:
 		notify("积分不足 · 清怪和完成委托可以获得积分")
 		return false
+	var inventory: Array[Dictionary] = weapons if Data.item(offer.id).kind == "weapon" else equipment
+	var auto_merge: bool = inventory.size() >= 6
 	if not add_item(offer.id, offer.tier):
 		return false
 	points -= price
 	offer.sold = true
-	notify("获得 " + Data.item(offer.id).name + " · Tab 查看 / 合并")
+	if not auto_merge:
+		notify("获得 " + Data.item(offer.id).name + " · Tab 查看 / 合并")
 	audio.sfx("coffee")
 	return true
 
 func refresh_price() -> int:
-	return 4 + current_room().refreshes * 2
+	return 0 if current_room().refreshes == 0 else 4 + (current_room().refreshes - 1) * 2
 
 func refresh_shop() -> bool:
 	if state != "shop":
@@ -897,13 +1042,18 @@ func interact() -> void:
 		notify("走近中央装置或 NPC 后按 E")
 		return
 	match room.type:
-		"boss": next_floor()
+		"boss": open_skill_reward()
+		"combat", "elite":
+			if room.get("reward_shop", false):
+				open_shop()
 		"treasure":
 			if not room.used:
 				var gift: Dictionary = Data.WEAPONS[rng.randi_range(0, Data.WEAPONS.size() - 1)]
+				var auto_merge: bool = weapons.size() >= 6
 				if add_item(gift.id, 2):
 					room.used = true
-					notify("宝库开启 · 获得精良 " + gift.name)
+					if not auto_merge:
+						notify("宝库开启 · 获得精良 " + gift.name)
 					audio.sfx("repair")
 			else:
 				notify("宝库已经领取过了")
@@ -939,28 +1089,43 @@ func accept_npc() -> bool:
 			knight_active = true
 			knight = player + Vector2(32, 20)
 			knight_cooldown = 0
-		"sekiro":
+		"basan":
 			if points < 12:
-				notify("只狼：先凑够 12 积分再来")
+				notify("八桑：先凑够 12 积分再来")
 				return false
 			points -= 12
 			buff_damage += 0.12
 		"laya":
 			var candidates: Array[Dictionary] = []
-			if weapons.size() < 6:
-				candidates.append_array(Data.WEAPONS)
-			if equipment.size() < 6:
-				candidates.append_array(Data.EQUIPMENT)
+			for spec_item in Data.WEAPONS + Data.EQUIPMENT:
+				if can_add_item(spec_item.id):
+					candidates.append(spec_item)
 			if candidates.is_empty():
 				notify("菈雅：先在 Tab 背包里腾出一个位置吧")
 				return false
 			var gift: Dictionary = candidates[rng.randi_range(0, candidates.size() - 1)]
-			add_item(gift.id)
-			notify("菈雅送给你 " + gift.name)
+			var inventory: Array[Dictionary] = weapons if gift.kind == "weapon" else equipment
+			var auto_merge: bool = inventory.size() >= 6
+			if not add_item(gift.id):
+				return false
+			if not auto_merge:
+				notify("菈雅送给你 " + gift.name)
 		"onion":
 			onion_skill = true
 			onion_cooldown = 0
 			notify("学会 Q 洋葱守护 · 震退敌人并获得 2 秒护盾")
+		"jiahao":
+			var upgraded: bool = false
+			for weapon in weapons:
+				if weapon.tier < 4:
+					weapon.tier += 1
+					weapon.cooldown = 0
+					upgraded = true
+					notify("嘉豪改装完成 · %s %s" % [Data.TIER_NAMES[weapon.tier - 1], Data.item(weapon.id).name])
+					break
+			if not upgraded:
+				notify("嘉豪：你的武器都已经是传说品质了")
+				return false
 	room.npc_used = true
 	state = "playing"
 	interaction_cooldown = 0.25
@@ -968,7 +1133,7 @@ func accept_npc() -> bool:
 	return true
 
 func next_floor() -> bool:
-	if state != "playing" or current_room().type != "boss" or not current_room().cleared or floor_index >= 2:
+	if state != "playing" or current_room().type != "boss" or not current_room().cleared or not current_room().skill_claimed or floor_index >= 2:
 		return false
 	collect_drops()
 	floor_index += 1
@@ -1053,6 +1218,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	var code: int = event.keycode
 	if code == KEY_F11:
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
+	elif code == KEY_F3:
+		show_fps = not show_fps
 	elif code == KEY_M:
 		muted = not muted
 		AudioServer.set_bus_mute(0, muted)
@@ -1075,7 +1242,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			"playing": toggle_inventory()
 			"paused", "npc": state = "playing"
 			"inventory", "guide", "map", "cheats": state = return_state
-			"shop": state = shop_return
+			"shop": leave_shop()
 			"dialogue":
 				if dialogue_kind == "ending":
 					finish_run(true)
@@ -1099,6 +1266,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			buy(code - KEY_1)
 		elif code == KEY_R:
 			refresh_shop()
+	elif state == "skill" and code >= KEY_1 and code <= KEY_3:
+		choose_skill(code - KEY_1)
 	elif state == "npc" and code in [KEY_ENTER, KEY_E]:
 		accept_npc()
 	elif state == "cheats" and code in [KEY_1, KEY_2]:

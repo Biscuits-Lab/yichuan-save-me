@@ -26,6 +26,23 @@ func service_room(kind: String) -> void:
 				return
 	push_error("No service preview seed found")
 
+func door_preview(direction: int) -> void:
+	game.state = "playing"
+	game.current_room().cleared = true
+	game.enemies.clear()
+	for room in game.rooms:
+		if room.links[direction] >= 0:
+			game.enter_room(room.id)
+			break
+	game.current_room().cleared = true
+	game.enemies.clear()
+	game.effects.clear()
+	game.texts.clear()
+	game.speech_time = 0
+	game.message_time = 0
+	game.player = game.current_room().doors[direction]
+	await snap("dungeon-passages-%d" % direction)
+
 func run() -> void:
 	DirAccess.make_dir_recursive_absolute("res://output/previews")
 	game = load("res://scenes/main.tscn").instantiate()
@@ -77,10 +94,21 @@ func run() -> void:
 	game.state = "playing"
 	game.current_room().cleared = true
 	service_room("npc")
+	game.current_room().npc = 3
+	game.player = game.npc_position() + Vector2(86, 30)
+	game.state = "playing"
+	game.knight_active = false
+	await snap("dungeon-06a-basan-world")
+	game.selected_npc = 3
+	game.state = "npc"
+	await snap("dungeon-06b-basan")
 	game.current_room().npc = 6
 	game.selected_npc = 6
 	game.state = "npc"
 	await snap("dungeon-06-npc")
+	game.current_room().npc = 7
+	game.selected_npc = 7
+	await snap("dungeon-06c-jiahao")
 	game.floor_index = 2
 	game.generate_floor()
 	for room in game.rooms:
@@ -96,6 +124,45 @@ func run() -> void:
 	game.enemies[0].windup = 0.7
 	game.enemies[0].aim = Vector2.LEFT
 	await snap("dungeon-07-yang-boss")
+	game.current_room().cleared = true
+	game.enemies.clear()
+	for room in game.rooms:
+		if room.type == "elite":
+			game.enter_room(room.id)
+			break
+	game.enemies.clear()
+	game.wave = game.wave_total - 1
+	game.spawn_wave()
+	game.player = game.room_center() + Vector2(-160, 60)
+	game.enemies[0].p = game.room_center() + Vector2(185, 0)
+	game.enemies[0].age = 2
+	game.enemies[0].windup = 0.7
+	game.enemies[0].aim = (game.player - game.enemies[0].p).normalized()
+	await snap("dungeon-07b-big-shark")
+	game.hit_enemy(game.enemies[0], 100000, game.player)
+	for i in range(46):
+		game._physics_process(1.0 / 60.0)
+	game.texts.clear()
+	game.effects.clear()
+	game.points = 200
+	await snap("dungeon-13-boss-shop")
+	for i in range(4):
+		game.buy(i)
+	await snap("dungeon-14-shop-sold-out")
+	game.refresh_shop()
+	await snap("dungeon-15-shop-refreshed")
+	game.floor_index = 0
+	game.generate_floor()
+	for room in game.rooms:
+		if room.type == "boss":
+			game.enter_room(room.id)
+			break
+	game.hit_enemy(game.enemies[0], 100000, game.player)
+	for i in range(46):
+		game._physics_process(1.0 / 60.0)
+	game.texts.clear()
+	game.effects.clear()
+	await snap("dungeon-16-floor-skills")
 	game.floor_index = 0
 	game.generate_floor()
 	game.invulnerable = 0
@@ -115,6 +182,8 @@ func run() -> void:
 	await snap("dungeon-11-camera-west")
 	game.player = game.room_center() + Vector2(300, 0)
 	await snap("dungeon-12-camera-east")
+	for direction in range(4):
+		await door_preview(direction)
 	game.state = "won"
 	await snap("dungeon-09-ending")
 	game.queue_free()
