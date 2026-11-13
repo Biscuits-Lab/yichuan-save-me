@@ -15,8 +15,11 @@ func run() -> void:
 	await snap("rogue-01-title")
 	game.start_run("story",20261112)
 	game.chapter_time = 0
-	game.player.position = Vector2(280,598)
+	game.player.position.x = game.room_data.encounters[0].trigger_x + 1
+	game.reveal_encounters()
+	game.player.position = game.npcs[0].p
 	game.player.health = 5
+	game.coins = 20
 	game.interact()
 	await snap("rogue-02-npc")
 	game.accept_npc()
@@ -38,10 +41,10 @@ func run() -> void:
 			bug.dead = true
 			bug.queue_free()
 	game.enemies.clear()
-	game.player.position = Vector2(2590,598)
+	game.player.position = Vector2(game.room_data.arena.x + 120,598)
 	game.player.velocity = Vector2.ZERO
-	game.camera_x = 2150
-	game.world.position.x = -2150
+	game.camera_x = game.player.position.x - 440
+	game.world.position.x = -game.camera_x
 	game.player.reset_physics_interpolation()
 	for i in range(game.gates.size()):
 		game.open_gate(i)

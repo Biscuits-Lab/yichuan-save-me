@@ -17,7 +17,7 @@ var scenery: Node2D
 var hud: Node2D
 var player: CharacterBody2D
 var audio: Node
-var world_length: float = 3520
+var world_length: float = 7040
 var camera_x: float = 0
 var stage: int = 0
 var room_index: int = 0
@@ -53,9 +53,18 @@ var total_kills: int = 0
 var bonus_damage: int = 0
 var ward: int = 0
 var npc_contract: bool = false
+var contract_pending: bool = false
 var npc_selected: int = -1
 var chest_open: bool = false
-var trap_cycles: Dictionary = {}
+var wave_delay: float = 0
+var difficulty_index: int = 1
+var run_difficulty: int = 1
+var difficulty_records: Dictionary = {}
+var cheat_invincible: bool = false
+var cheat_one_hit: bool = false
+var run_assisted: bool = false
+var cheat_return_state: String = "title"
+var environment: Dictionary = Data.ENVIRONMENTS.ugs
 var clock: float = 0
 var run_time: float = 0
 var best_time: float = 0
@@ -163,6 +172,8 @@ func start_run(selected_mode: String = "", seed_value: int = 0) -> void:
 	room_index = 0
 	cleared_rooms = 0
 	run_time = 0
+	run_difficulty = difficulty_index
+	run_assisted = cheat_invincible or cheat_one_hit
 	score = 0
 	coins = 0
 	total_kills = 0
@@ -194,11 +205,14 @@ func build_room() -> void:
 	trails.clear()
 	floating_text.clear()
 	hazards.clear()
-	trap_cycles.clear()
+	wave_delay = 0
 	npcs.clear()
 	boss_ref = null
 	stage = (room_index / 3) % 4
 	event = Data.EVENTS[event_order[room_index % event_order.size()]]
+	environment = Data.ENVIRONMENTS[event.kind]
+	var background_path: String = "res://assets/art/environments/%s.png" % event.kind
+	background_art = load(background_path) if ResourceLoader.exists(background_path) else load("res://assets/art/district-background.png")
 	room_data = Rooms.generate(run_seed, room_index, route)
 	world_length = room_data.length
 	room_phase = "approach"
@@ -207,6 +221,7 @@ func build_room() -> void:
 	room_wave = 0
 	relay_count = 0
 	npc_contract = false
+	contract_pending = false
 	chest_open = false
 	scenery = WorldScript.new()
 	scenery.game = self
@@ -220,9 +235,9 @@ func build_room() -> void:
 	for gate_x in room_data.gates:
 		var rect := Rect2(float(gate_x),-200,24,1000)
 		gates.append({"rect":rect,"body":add_solid(rect),"open":false})
-	npcs.append({"id":room_index % 4, "p":Vector2(295,600), "used":false})
-	npcs.append({"id":(room_index + 2) % 4, "p":Vector2(1900,480), "used":false})
-	coffee.append({"p":Vector2(1385,455), "taken":false})
+	npc_selected = -1
+	for point in room_data.coffee:
+		coffee.append({"p":point,"taken":false})
 	player.position = room_data.spawn
 	player.velocity = Vector2.ZERO
 	player.reset_motion()
@@ -260,7 +275,23 @@ func rank(id: String) -> int:
 	return int(skill_ranks.get(id,0))
 
 func max_health() -> int:
-	return 8 + rank("health") * 2
+	return int(difficulty_spec().health) + rank("health") * 2
+
+func difficulty_spec() -> Dictionary:
+	return Data.DIFFICULTIES[run_difficulty]
+
+func set_difficulty(index: int) -> void:
+	if state != "title":
+		return
+	difficulty_index = posmod(index,Data.DIFFICULTIES.size())
+	show_records(difficulty_index)
+	save_record()
+
+func show_records(index: int) -> void:
+	var record: Dictionary = difficulty_records.get(Data.DIFFICULTIES[index].id,{})
+	best_time = float(record.get("best_time",0))
+	best_floor = int(record.get("best_floor",0))
+	best_score = int(record.get("best_score",0))
 
 func cooldown_scale() -> float:
 	return 1.0 - rank("cooldown") * 0.12
@@ -282,22 +313,70 @@ func spawn_bug(point: Vector2, kind: String, boss: bool = false, depth: int = 0)
 
 func enemy_health(boss: bool) -> int:
 	var amount: int = 26 + room_index * 6 if boss else 3 + room_index / 3
-	return ceili(amount * (1.3 if route == "elite" else 1.0))
+	return maxi(1,roundi(amount * (1.3 if route == "elite" else 1.0) * difficulty_spec().enemy_health))
+
+func wave_count() -> int:
+	return room_data.zones.size() * 2
+
+func enemies_per_wave(index: int) -> int:
+	return clampi(4 + room_index / 4 + index % 2 + (2 if route == "elite" else 0) + int(difficulty_spec().extra_enemies),3,10)
 
 func spawn_wave(index: int) -> void:
 	room_wave = index
 	room_phase = "combat"
-	var count: int = mini(10,4 + room_index / 4 + (2 if route == "elite" else 0) + (2 if npc_contract and index == 1 else 0))
+	var count: int = enemies_per_wave(index)
+	if contract_pending:
+		count += 2
+		contract_pending = false
+	var zone: Dictionary = room_data.zones[index / 2]
 	var mixed: Array[String] = [event.kind,"ugs","script","p4","shader","nanite","lumen","ddc","gc","leak","live","net"]
+	var left: float = 1240 if index % 2 else 650
+	var right: float = 1640 if index % 2 else 1450
 	for i in range(count):
 		var kind: String = event.kind if i % 2 == 0 else mixed[rng.randi_range(1,mixed.size() - 1)]
-		var x: float = (650 if index == 0 else 1640) + i * (800.0 / maxf(1,count - 1))
-		if (x > 990 and x < 1210) or (x > 2200 and x < 2420):
-			x = 1240 if index == 0 else 2450
+		var x: float = zone.start + left + i * ((right - left) / maxf(1,count - 1))
+		if absf(x - player.position.x) < 160:
+			var direction: float = 1 if player.position.x < zone.start + 1450 else -1
+			x = clampf(player.position.x + direction * 200,zone.start + left,zone.start + right)
+		if x > zone.start + 990 and x < zone.start + 1210:
+			x = zone.start + 1250 + i * 16
 		spawn_bug(Vector2(x,465 if kind in ["script","net","lumen","nanite"] else 598),kind)
-	feedback = "第 %d / 2 波 · 清理故障后修复发光节点" % (index + 1)
+	feedback = "战区 %d / %d · 第 %d / %d 波 · 清空后自动开门" % [index / 2 + 1,room_data.zones.size(),index + 1,wave_count()]
 	feedback_time = 3
 	audio.sfx("select")
+
+func advance_combat() -> void:
+	if room_phase != "combat" or not enemies.is_empty():
+		return
+	var zone: Dictionary = room_data.zones[relay_count]
+	if room_wave + 1 < int(zone.first_wave) + int(zone.waves):
+		room_phase = "reinforce"
+		wave_delay = 0.85
+		feedback = "前锋已清空 · 增援即将抵达"
+		feedback_time = 2
+		return
+	room_data.relays[relay_count].done = true
+	open_gate(relay_count)
+	burst(room_data.relays[relay_count].p + Vector2(0,-40),Color("a7eec0"),25)
+	relay_count += 1
+	player.energy = minf(100,player.energy + 25)
+	audio.sfx("repair")
+	if relay_count >= room_data.zones.size():
+		summon_boss()
+	else:
+		room_phase = "approach"
+		feedback = "区域清空 · 节点自动恢复，通路已打开"
+		feedback_time = 4
+		log_event("战区 %d 已恢复 · 继续向右，无需返回节点。" % relay_count,Color("b5e4bc"))
+
+func reveal_encounters() -> void:
+	for encounter in room_data.encounters:
+		if not encounter.revealed and player.position.x >= encounter.trigger_x:
+			encounter.revealed = true
+			npcs.append({"id":encounter.id,"p":encounter.p,"used":false})
+			var spec: Dictionary = Data.NPCS[encounter.id]
+			vfx(7,encounter.p + Vector2(0,-35),85,0.5)
+			log_event("途中偶遇 · " + spec.name + "：" + spec.quote,spec.color)
 
 func summon_boss() -> void:
 	room_phase = "boss"
@@ -330,14 +409,13 @@ func objective_target() -> Dictionary:
 					nearest = bug
 		if nearest != null:
 			return {"p":nearest.position,"label":"关底 Boss" if nearest.is_boss else "剩余故障", "hint":"J 斩击 · K 破锁", "color":Color("ec9c82")}
-	if room_phase == "relay" and relay_count < room_data.relays.size():
-		return {"p":room_data.relays[relay_count].p,"label":"修复节点 %d" % (relay_count + 1),"hint":"跳上高台，按 E 重启","color":Color("b4e7bd")}
-	return {"p":Vector2(535,598),"label":"进入战区","hint":"向右前进，开始救场","color":event.color}
+	if room_phase == "reinforce":
+		return {"p":player.position,"label":"增援即将到达","hint":"准备应战 · 清空后自动开门","color":event.color}
+	var next_zone: Dictionary = room_data.zones[mini(relay_count,room_data.zones.size() - 1)]
+	return {"p":Vector2(next_zone.trigger + 25,598),"label":"进入战区 %d" % (relay_count + 1),"hint":"向右前进 · 无需返回节点","color":event.color}
 
 func gate_hint(index: int) -> String:
-	if index == relay_count and room_phase == "relay":
-		return "修复上层节点 %d · 按 E" % (index + 1)
-	return "清理当前波次后修复节点 %d" % (index + 1)
+	return "清空本区域两波敌人后自动解锁" if index == relay_count else "前方战区 · 逐区清理后自动开放"
 
 func _process(delta: float) -> void:
 	clock += delta
@@ -354,12 +432,15 @@ func _process(delta: float) -> void:
 		update_effects(delta)
 		update_hazards(delta)
 		enemies = enemies.filter(func(bug): return is_instance_valid(bug) and not bug.dead)
-		if room_phase == "approach" and player.position.x > 510:
-			spawn_wave(0)
-		elif room_phase == "combat" and enemies.is_empty():
-			room_phase = "relay"
-			feedback = "故障已清空：跳到发光节点，按 E 修复。"
-			feedback_time = 4
+		reveal_encounters()
+		if room_phase == "approach" and relay_count < room_data.zones.size() and player.position.x > room_data.zones[relay_count].trigger:
+			spawn_wave(int(room_data.zones[relay_count].first_wave))
+		elif room_phase == "combat":
+			advance_combat()
+		elif room_phase == "reinforce":
+			wave_delay -= delta
+			if wave_delay <= 0:
+				spawn_wave(room_wave + 1)
 		for cup in coffee:
 			if not cup.taken and player.position.distance_to(cup.p + Vector2(0,25)) < 55:
 				cup.taken = true
@@ -410,42 +491,7 @@ func update_effects(delta: float) -> void:
 			orb.life = 0
 	projectiles = projectiles.filter(func(p): return p.life > 0 and p.p.x > -100 and p.p.x < world_length + 100 and p.p.y > -200 and p.p.y < 850)
 
-func trap_phase(index: int) -> float:
-	return fmod(room_clock + index * 1.7,5.5)
-
-func trap_state(index: int) -> String:
-	if event.hazard == "cache":
-		return "safe"
-	if room_phase == "approach":
-		return "idle"
-	var phase: float = trap_phase(index)
-	if phase >= 3.8 and phase < 4.6:
-		return "active"
-	if phase >= 2.9 and phase < 3.8:
-		return "warning"
-	return "idle"
-
-func trap_area(index: int) -> Rect2:
-	return room_data.traps[index].grow_individual(0,65,0,0)
-
 func update_hazards(delta: float) -> void:
-	if room_phase == "approach":
-		return
-	for i in range(room_data.traps.size()):
-		var rect: Rect2 = room_data.traps[i]
-		var cycle: int = int((room_clock + i * 1.7) / 5.5)
-		if trap_state(i) == "active":
-			if trap_area(i).intersects(player.bounds()):
-				if event.hazard == "vacuum":
-					player.energy = maxf(0,player.energy - 18 * delta)
-				elif event.hazard != "cache":
-					player.hurt(1,rect.get_center().x)
-			if int(trap_cycles.get(i,-1)) != cycle and absf(rect.position.x - player.position.x) < 850:
-				trap_cycles[i] = cycle
-				if event.hazard in ["light","delayed","pulse"]:
-					var p: Vector2 = rect.get_center() + Vector2(0,-35)
-					var direction: Vector2 = (player.position + Vector2(0,-40) - p).normalized()
-					shoot(p,direction * 180,event.color,0.75 if event.hazard == "delayed" else 0)
 	for hazard in hazards:
 		hazard.delay -= delta
 		if hazard.delay <= 0:
@@ -474,33 +520,12 @@ func interact() -> void:
 		vfx(7,room_data.chest + Vector2(0,-25),100,0.5)
 		if event.hazard == "cache":
 			spawn_bug(room_data.chest + Vector2(-80,-25),"ddc")
-			spawn_bug(Vector2(3040,598),"ddc")
+			spawn_bug(Vector2(room_data.chest.x + 110,598),"ddc")
 			say("坏啦",2,"毅川 · 缓存箱活过来了")
 		else:
 			float_text("+14 工单 · 能量补给",room_data.chest + Vector2(0,-70),Color("eed09a"))
 		return
-	for i in range(room_data.relays.size()):
-		var relay: Dictionary = room_data.relays[i]
-		if player.position.distance_to(relay.p) < 110:
-			if relay.done:
-				feedback = "这个节点已经恢复。"
-			elif room_phase != "relay" or i != relay_count:
-				feedback = "先清理当前波次，再按顺序重启节点。"
-			else:
-				relay.done = true
-				open_gate(i)
-				relay_count += 1
-				player.energy = minf(100,player.energy + 25)
-				burst(relay.p + Vector2(0,-40),Color("a7eec0"),25)
-				audio.sfx("repair")
-				if relay_count == 1:
-					spawn_wave(1)
-				else:
-					summon_boss()
-				return
-			feedback_time = 3
-			return
-	feedback = "E 与 NPC 交谈、打开宝箱，或修复已解锁节点。"
+	feedback = "清空当前战区后自动开门；E 可与途中 NPC 交谈或打开宝箱。"
 	feedback_time = 3
 
 func accept_npc() -> void:
@@ -517,11 +542,18 @@ func accept_npc() -> void:
 			player.energy = minf(100,player.energy + 30)
 		1:
 			npc_contract = true
-			if room_wave == 1:
-				spawn_bug(Vector2(2000,598),event.kind)
-				spawn_bug(Vector2(2500,598),event.kind)
-				if room_phase == "relay":
-					room_phase = "combat"
+			# Extra enemies belong to the current, still-locked battle area.
+			if room_phase in ["combat","reinforce"]:
+				var zone: Dictionary = room_data.zones[relay_count]
+				spawn_bug(Vector2(zone.start + 1280,598),event.kind)
+				spawn_bug(Vector2(zone.start + 1510,598),event.kind)
+				room_phase = "combat"
+			elif room_phase == "boss":
+				var arena: Vector2 = room_data.arena
+				spawn_bug(Vector2(arena.x + 180,598),event.kind)
+				spawn_bug(Vector2(arena.x + 420,598),event.kind)
+			else:
+				contract_pending = true
 		2:
 			ward = mini(3,ward + 1)
 		3:
@@ -653,7 +685,16 @@ func fall_recover() -> void:
 	player.invulnerable = 0
 	player.hurt(2,player.position.x + 1)
 	if state == "playing":
-		player.position = Vector2(980 if player.position.x < 1180 else 2160,470)
+		var recovery: Vector2 = room_data.spawn
+		var distance: float = INF
+		for rect in platforms:
+			if rect.size.y < 50:
+				continue
+			var x: float = clampf(player.position.x,rect.position.x + 45,rect.end.x - 45)
+			if absf(x - player.position.x) < distance:
+				distance = absf(x - player.position.x)
+				recovery = Vector2(x,rect.position.y - 2)
+		player.position = recovery
 		player.velocity = Vector2.ZERO
 		player.reset_physics_interpolation()
 		say("坏啦",2,"毅川 · 空指针深渊")
@@ -666,25 +707,49 @@ func die() -> void:
 	update_records(false)
 
 func update_records(won: bool) -> void:
+	if run_assisted:
+		return
 	best_score = maxi(best_score,score)
 	if mode == "endless":
 		best_floor = maxi(best_floor,cleared_rooms)
 	elif won and (best_time <= 0 or run_time < best_time):
 		best_time = run_time
+	difficulty_records[Data.DIFFICULTIES[run_difficulty].id] = {"best_time":best_time,"best_floor":best_floor,"best_score":best_score}
 	save_record()
 
 func load_record() -> void:
 	if FileAccess.file_exists(record_path):
 		var data = JSON.parse_string(FileAccess.get_file_as_string(record_path))
 		if data is Dictionary:
-			best_time = float(data.get("rogue_best_time",0))
-			best_floor = int(data.get("best_floor",0))
-			best_score = int(data.get("best_score",0))
+			difficulty_index = clampi(int(data.get("difficulty",1)),0,Data.DIFFICULTIES.size() - 1)
+			var saved = data.get("difficulty_records",{})
+			difficulty_records = saved if saved is Dictionary else {}
+			if not difficulty_records.has("standard"):
+				difficulty_records.standard = {"best_time":float(data.get("rogue_best_time",0)),"best_floor":int(data.get("best_floor",0)),"best_score":int(data.get("best_score",0))}
+	show_records(difficulty_index)
 
 func save_record() -> void:
 	var file := FileAccess.open(record_path,FileAccess.WRITE)
 	if file:
-		file.store_string(JSON.stringify({"rogue_best_time":best_time,"best_floor":best_floor,"best_score":best_score}))
+		var standard: Dictionary = difficulty_records.get("standard",{})
+		file.store_string(JSON.stringify({"rogue_best_time":standard.get("best_time",0),"best_floor":standard.get("best_floor",0),"best_score":standard.get("best_score",0),"difficulty":difficulty_index,"difficulty_records":difficulty_records}))
+
+func toggle_cheats() -> void:
+	if state == "cheats":
+		state = cheat_return_state
+	elif state in ["title","playing","paused"]:
+		cheat_return_state = state
+		state = "cheats"
+
+func toggle_cheat(index: int) -> void:
+	if state != "cheats":
+		return
+	if index == 0:
+		cheat_invincible = not cheat_invincible
+	elif index == 1:
+		cheat_one_hit = not cheat_one_hit
+	if cheat_return_state != "title" and (cheat_invincible or cheat_one_hit):
+		run_assisted = true
 
 func shoot(point: Vector2, velocity: Vector2, color: Color, delay: float = 0, friendly: bool = false, amount: int = 1, target: Node = null) -> void:
 	projectiles.append({"p":point,"v":velocity,"color":color,"delay":delay,"friendly":friendly,"damage":amount,"target":target,"life":7.0})
@@ -716,6 +781,15 @@ func time_label(seconds: float) -> String:
 func _unhandled_input(input: InputEvent) -> void:
 	if input is InputEventKey and input.pressed and not input.echo:
 		var key: int = input.keycode
+		if key == KEY_HOME:
+			toggle_cheats()
+			return
+		if state == "cheats":
+			if key in [KEY_1,KEY_2]:
+				toggle_cheat(key - KEY_1)
+			elif key in [KEY_ESCAPE,KEY_ENTER,KEY_KP_ENTER]:
+				toggle_cheats()
+			return
 		if key == KEY_M:
 			muted = not muted
 			AudioServer.set_bus_mute(0,muted)
@@ -743,7 +817,10 @@ func _unhandled_input(input: InputEvent) -> void:
 		elif key in [KEY_LEFT,KEY_UP,KEY_RIGHT,KEY_DOWN]:
 			var increment: int = -1 if key in [KEY_LEFT,KEY_UP] else 1
 			if state == "title":
-				selection = posmod(selection + increment,3)
+				if key in [KEY_LEFT,KEY_RIGHT]:
+					set_difficulty(difficulty_index + increment)
+				else:
+					selection = posmod(selection + increment,3)
 			elif state in ["upgrade","route"]:
 				card_selection = posmod(card_selection + increment,3 if state == "upgrade" else 2)
 		elif key in [KEY_ENTER,KEY_KP_ENTER]:
@@ -775,8 +852,18 @@ func handle_click(point: Vector2) -> void:
 	match state:
 		"title":
 			for i in range(3):
+				if Rect2(462 + i * 96,467,88,40).has_point(point):
+					set_difficulty(i)
+					return
+			for i in range(3):
 				if Rect2(96,426 + i * 62,320,52).has_point(point):
 					activate_menu(i)
+		"cheats":
+			for i in range(2):
+				if Rect2(400,285 + i * 85,480,65).has_point(point):
+					toggle_cheat(i)
+			if Rect2(470,495,340,52).has_point(point):
+				toggle_cheats()
 		"upgrade":
 			for i in range(3):
 				if Rect2(160 + i * 328,220,304,328).has_point(point):

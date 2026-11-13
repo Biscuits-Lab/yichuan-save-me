@@ -90,7 +90,7 @@ func process_mob(delta: float, dx: float) -> void:
 			proposed = signf(origin.x - position.x) * 65
 		velocity.x = proposed if stun <= 0 else move_toward(velocity.x,0,delta * 900)
 		move_and_slide()
-	shot_timer -= delta if stun <= 0 else 0.0
+	shot_timer -= delta * float(game.difficulty_spec().tempo) if stun <= 0 else 0.0
 	if shot_timer <= 0 and absf(dx) < 700 and game.player.position.x > 450:
 		shot_timer = 2.8 + fmod(origin.x,0.8)
 		var point: Vector2 = position + Vector2(0,-32)
@@ -130,11 +130,11 @@ func process_boss(delta: float, dx: float) -> void:
 		if not game.ground_support(position + Vector2(signf(next_x) * 60,8)) and is_on_floor():
 			next_x = 0
 		velocity.x = next_x
-		shot_timer -= delta if stun <= 0 else 0.0
+		shot_timer -= delta * float(game.difficulty_spec().tempo) if stun <= 0 else 0.0
 		if shot_timer <= 0:
 			telegraph = 0.7 if not enraged else 0.5
 			charge_direction = facing
-	position.x = clampf(position.x,520,game.world_length - 130)
+	position.x = clampf(position.x,game.room_data.arena.x,game.room_data.arena.y)
 	move_and_slide()
 
 func boss_attack(enraged: bool) -> void:
@@ -146,7 +146,7 @@ func boss_attack(enraged: bool) -> void:
 		"ugs", "leak", "ddc":
 			if attack_count % 2 == 0 and game.enemies.size() < 12:
 				for side in [-1,1]:
-					game.spawn_bug(Vector2(clampf(position.x + side * 100,500,3300),598),kind,false,1)
+					game.spawn_bug(Vector2(clampf(position.x + side * 100,game.room_data.arena.x + 80,game.room_data.arena.y - 80),598),kind,false,1)
 			for angle in [-0.22,0.0,0.22]:
 				game.shoot(point,aim.rotated(angle) * 210,color())
 		"live", "nanite", "p4":
@@ -161,7 +161,7 @@ func boss_attack(enraged: bool) -> void:
 			for i in range(8 if enraged else 6):
 				game.shoot(point,Vector2.from_angle(i * TAU / (8 if enraged else 6) + attack_count * 0.3) * 170,color(),0.5 if kind == "net" else 0)
 			if kind == "script":
-				position.x = clampf(game.player.position.x + (240 if attack_count % 2 else -240),2450,3200)
+				position.x = clampf(game.player.position.x + (240 if attack_count % 2 else -240),game.room_data.arena.x + 80,game.room_data.arena.y - 80)
 				reset_physics_interpolation()
 		_:
 			for angle in [-0.4,-0.2,0.0,0.2,0.4]:
@@ -175,9 +175,11 @@ func get_bounds() -> Rect2:
 	return Rect2(position + Vector2(-50,-145),Vector2(100,145)) if is_boss else Rect2(position + Vector2(-27,-64),Vector2(54,64))
 
 func take_hit(amount: int, direction: float, piercing: bool = false) -> bool:
-	if dead:
+	if dead or amount <= 0:
 		return false
-	if kind == "p4" and not shield_open and not piercing:
+	if game.cheat_one_hit:
+		amount = maxi(amount,hp)
+	elif kind == "p4" and not shield_open and not piercing:
 		game.float_text("只读 · K 破锁",position + Vector2(0,-83),Color("e6c78e"))
 		game.audio.sfx("block")
 		return false

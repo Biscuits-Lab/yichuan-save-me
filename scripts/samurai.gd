@@ -180,7 +180,7 @@ func cast_skill() -> void:
 			orb.life = 0
 
 func hurt(amount: int, source_x: float) -> void:
-	if invulnerable > 0 or game.state != "playing":
+	if game.cheat_invincible or invulnerable > 0 or game.state != "playing":
 		return
 	if shield_time > 0 or game.ward > 0:
 		if shield_time <= 0:
@@ -188,6 +188,7 @@ func hurt(amount: int, source_x: float) -> void:
 		invulnerable = 0.35
 		game.vfx(4,position + Vector2(0,-40),100,0.2)
 		return
+	amount += int(game.difficulty_spec().damage_bonus)
 	health = maxi(0,health - amount)
 	invulnerable = 1.1
 	hurt_pose = 0.16

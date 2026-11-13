@@ -15,7 +15,7 @@ func _ready() -> void:
 	speech_style.set_corner_radius_all(9)
 
 func _draw() -> void:
-	if game.state == "title" or (game.state == "guide" and game.previous_state == "title"):
+	if game.state == "title" or (game.state == "guide" and game.previous_state == "title") or (game.state == "cheats" and game.cheat_return_state == "title"):
 		title_screen()
 	else:
 		game_hud()
@@ -25,6 +25,7 @@ func _draw() -> void:
 		"upgrade": upgrades()
 		"route": routes()
 		"npc": npc_panel()
+		"cheats": cheat_panel()
 		"paused", "dead", "won": overlay()
 	for y in range(0,720,4):
 		draw_rect(Rect2(0,y,1280,1),Color(0,0,0,0.035))
@@ -78,7 +79,7 @@ func title_screen() -> void:
 		draw_rect(Rect2(i * 14,0,14,720),Color(0.025,0.06,0.105,clampf(0.92 - i / 69.0,0,0.92)))
 	draw_rect(Rect2(94,54,8,8),MINT)
 	pixel("YICHUAN / ROGUELITE",Vector2(116,64),10,MINT)
-	pixel("BUILD 02.1",Vector2(1090,64),9,CREAM)
+	pixel("BUILD 03.0",Vector2(1090,64),9,CREAM)
 	panel(Rect2(96,145,227,31),Color("17323a"),Color("577b70"))
 	text("横版肉鸽 · 今天也在救项目",Vector2(109,167),15,MINT)
 	text("毅川",Vector2(90,264),84,CREAM,game.display_font)
@@ -90,10 +91,18 @@ func title_screen() -> void:
 	button(Rect2(96,426,320,52),"来了 · 剧情救场",true,game.selection == 0)
 	button(Rect2(96,488,320,52),"无尽加班 · 无尽模式",false,game.selection == 1)
 	button(Rect2(96,550,320,52),"工程生存手册",false,game.selection == 2)
+	panel(Rect2(445,426,325,176),Color(0.04,0.12,0.16,0.94),Color("506e64"))
+	text("难度 · ← → 调整",Vector2(463,451),16,MINT)
+	for i in range(game.Data.DIFFICULTIES.size()):
+		var selected: bool = game.difficulty_index == i
+		panel(Rect2(462 + i * 96,467,88,40),MINT if selected else Color("142c36"),MINT if selected else Color("506e64"))
+		center(game.Data.DIFFICULTIES[i].name,Vector2(506 + i * 96,494),18,INK if selected else CREAM)
+	paragraph(game.Data.DIFFICULTIES[game.difficulty_index].desc,Vector2(463,534),286,15,MUTED,2)
+	text("Home · 作弊设置",Vector2(463,585),13,MUTED)
 	text("本局构筑 · 随机路线 · 关底三选一",Vector2(97,630),14,MUTED)
 	draw_line(Vector2(96,648),Vector2(1184,648),Color(0.64,0.75,0.65,0.25),1)
 	pixel("STORY / 12 STAGES     ENDLESS / NO LIMIT",Vector2(96,679),8)
-	text("无尽纪录 %d 关  ·  最高分 %d" % [game.best_floor,game.best_score],Vector2(872,679),16,CREAM)
+	text("%s · 无尽 %d 关 · 最高分 %d" % [game.Data.DIFFICULTIES[game.difficulty_index].name,game.best_floor,game.best_score],Vector2(820,679),16,CREAM)
 
 func game_hud() -> void:
 	panel(Rect2(24,22,365,112),Color(0.04,0.1,0.14,0.95),Color("416158"))
@@ -108,7 +117,7 @@ func game_hud() -> void:
 	draw_rect(Rect2(121,108,198,6),Color("30434a"))
 	draw_rect(Rect2(121,108,198 * game.player.energy / 100.0,6),MINT)
 	text("能量",Vector2(330,115),12,MUTED)
-	text("无尽加班" if game.mode == "endless" else game.Data.CHAPTERS[game.stage],Vector2(435,42),18,MINT)
+	text(("无尽加班" if game.mode == "endless" else game.Data.CHAPTERS[game.stage]) + " · " + game.difficulty_spec().name,Vector2(435,42),18,MINT)
 	pixel("STAGE %02d%s" % [game.room_index + 1," / 12" if game.mode == "story" else " / INF"],Vector2(436,67),9,CREAM)
 	text("工单 %d   击杀 %d" % [game.coins,game.total_kills],Vector2(436,94),16,MUTED)
 	pixel(game.time_label(game.run_time),Vector2(436,120),10,MINT)
@@ -116,21 +125,22 @@ func game_hud() -> void:
 	panel(Rect2(760,22,406,113),Color(0.04,0.1,0.14,0.95),Color("416158"))
 	draw_rect(Rect2(760,22,4,113),game.event.color)
 	text(game.event.tool + " · " + game.event.title,Vector2(780,51),22,CREAM)
-	var objective: String = "前进进入战区 · E 与路上的 NPC 交谈"
+	text("作弊局 · 不计纪录" if game.run_assisted else "Home 作弊设置",Vector2(436,149),12,CORAL if game.run_assisted else MUTED)
+	var objective: String = "向右进入下一战区 · 清空后自动开门"
 	match game.room_phase:
-		"combat": objective = "清理第 %d 波 · 剩余 %d 个故障" % [game.room_wave + 1,game.enemies.size()]
-		"relay": objective = "跟随目标箭头，跳上高台修复节点 %d" % (game.relay_count + 1)
+		"combat": objective = "战区 %d/3 · 波次 %d/%d · 剩余 %d" % [game.relay_count + 1,game.room_wave + 1,game.wave_count(),game.enemies.size()]
+		"reinforce": objective = "前锋已清空 · 增援即将到达"
 		"boss": objective = "关底 Boss · " + game.event.boss
 		"reward": objective = "故障已解决 · 选择技能进入下一关"
 	text(objective,Vector2(781,79),16,MINT)
-	text(game.room_data.name + (" · 精英路线" if game.route == "elite" else " · 分层探索"),Vector2(781,111),14,MUTED)
+	text(game.environment.name + (" · 精英路线" if game.route == "elite" else " · 三战区探索"),Vector2(781,111),14,MUTED)
 	panel(Rect2(1180,23,64,46),Color("142d37"),Color("416158"))
 	draw_rect(Rect2(1200,37,5,17),CREAM)
 	draw_rect(Rect2(1212,37,5,17),CREAM)
 	text("F1 手册",Vector2(1181,96),13,MUTED)
 	# Room map gives the vertical objectives a clear destination.
 	draw_line(Vector2(780,151),Vector2(1147,151),Color("45685f"),2)
-	for i in range(2):
+	for i in range(game.room_data.relays.size()):
 		var relay: Dictionary = game.room_data.relays[i]
 		var x: float = 780 + relay.p.x / game.world_length * 367
 		draw_colored_polygon(PackedVector2Array([Vector2(x,145),Vector2(x + 6,151),Vector2(x,157),Vector2(x - 6,151)]),MINT if relay.done else game.event.color)
@@ -160,7 +170,7 @@ func game_hud() -> void:
 	if game.chapter_time > 0 and game.state == "playing":
 		panel(Rect2(430,185,420,90),Color(0.05,0.13,0.17,0.95),game.event.color)
 		center("子关卡 %02d · %s" % [game.room_index + 1,game.event.title],Vector2(640,223),25)
-		center("双节点 → 关底 Boss → 技能三选一",Vector2(640,255),16,game.event.color)
+		center("三战区 · 六波故障 → Boss → 技能三选一",Vector2(640,255),16,game.event.color)
 	if is_instance_valid(game.boss_ref) and not game.boss_ref.dead:
 		panel(Rect2(390,172,500,42),Color("142530"),Color("805b5d"))
 		draw_rect(Rect2(395,200,490.0 * maxf(0,game.boss_ref.hp) / game.boss_ref.max_hp,8),game.event.color)
@@ -228,13 +238,13 @@ func upgrades() -> void:
 func routes() -> void:
 	scrim()
 	center("下一张工单，怎么接？",Vector2(640,150),37)
-	center("技能会保留。下一关会重新生成布局、怪物与机关。",Vector2(640,190),18,MUTED)
+	center("技能会保留。下一关会重新生成布局、怪物与途中偶遇。",Vector2(640,190),18,MUTED)
 	for i in range(2):
 		var rect := Rect2(285 + i * 370,250,340,280)
 		panel(rect,Color("1a363e") if game.card_selection == i else Color("142c36"),MINT if game.card_selection == i else Color("496356"))
 		icon(7 if i == 0 else 8,rect.position + Vector2(60,63),70)
 		text("稳定分支" if i == 0 else "精英分支",rect.position + Vector2(110,70),27)
-		paragraph("进入下一关，恢复 2 点生命。适合继续探索和积累技能。" if i == 0 else "敌人数量增加、生命 +30%；工单掉落 +50%，多一处机关。",rect.position + Vector2(28,135),284,20,MUTED,4)
+		paragraph("进入下一关，恢复 2 点生命。适合继续探索和积累技能。" if i == 0 else "每波增加敌人、生命 +30%；工单掉落 +50%，适合挑战更强构筑。",rect.position + Vector2(28,135),284,20,MUTED,4)
 		text("1 · 继续救场" if i == 0 else "2 · 接受挑战",rect.position + Vector2(28,247),19,MINT if i == 0 else CORAL)
 
 func npc_panel() -> void:
@@ -260,7 +270,7 @@ func guide() -> void:
 	pixel("FIELD MANUAL / ROGUELITE",Vector2(112,87),9,MINT)
 	text("工程生存手册",Vector2(111,137),37,CREAM,game.display_font)
 	button(Rect2(1000,65,150,44),"返回",false)
-	text("每个子关卡：两波故障 → 两个分层节点 → 独立 Boss → 技能三选一",Vector2(112,180),21,MINT)
+	text("每个子关卡：三个战区 / 六波故障 → 自动开门 → 关底 Boss → 技能三选一",Vector2(112,180),19,MINT)
 	for i in range(4):
 		var x: float = 112 + i * 267
 		panel(Rect2(x,214,253,172),Color("17313a"),Color("446053"))
@@ -269,11 +279,11 @@ func guide() -> void:
 		for j in range(3):
 			text(game.Data.EVENTS[i * 3 + j].tool + " · " + game.Data.EVENTS[i * 3 + j].title,Vector2(x + 17,312 + j * 24),14,MUTED)
 	text("A / D 移动 · 空格二段跳 · J 连斩（可长按）· K 断点领域 · L / Shift 无敌冲刺",Vector2(112,430),18,MINT)
-	text("U 飞剑 / I 回滚盾需要技能解锁 · E 交互 · Tab 技能列表 · Esc 暂停 · M 静音 · F11 全屏",Vector2(112,466),17,MUTED)
+	text("U 飞剑 / I 回滚盾需要技能解锁 · E 交互 · Tab 技能列表 · Esc 暂停 · Home 作弊设置 · M 静音 · F11 全屏",Vector2(112,466),15,MUTED)
 	paragraph("剧情共 12 个子关卡；无尽模式不会在第 12 关结束，敌人和 Boss 持续成长。倒下会结束本局，重新开局时技能与工单重置；最高分和无尽纪录保留。",Vector2(112,510),1028,18,MUTED,3)
 	draw_line(Vector2(112,590),Vector2(1168,590),Color("3a5750"),1)
-	text("旅途中会遇到：若宇、罗德、海德骑士、只狼。每人提供不同帮助，每关只能领取一次。",Vector2(112,624),17,CREAM)
-	text("宝箱可选，精英路线有额外收益。地面亮起预警时离开危险区域。",Vector2(112,654),16,MUTED)
+	text("若宇、罗德、海德骑士、只狼会在途中随机出现，入口不再固定安排 NPC。",Vector2(112,624),17,CREAM)
+	text("高台与宝箱属于可选探索；周期喷口已移除。休闲 / 标准 / 硬核可在标题界面选择。",Vector2(112,654),16,MUTED)
 
 func build_panel() -> void:
 	scrim()
@@ -307,6 +317,20 @@ func overlay() -> void:
 	game.actions_atlas.draw(self,7 if won else (6 if dead else 0),Vector2(640,286),95)
 	center("终于，下班了。" if won else ("哦豁，完蛋" if dead else "断点休息一下"),Vector2(640,339),37)
 	center("%d 个 Boss · %d 击杀 · %d 分" % [game.cleared_rooms,game.total_kills,game.score],Vector2(640,378),19,MINT)
-	center("倒下结束本局，再来一次换个流派。" if dead else ("12 个开发故障全部解决。" if won else "按 Tab 可以查看本局技能。"),Vector2(640,414),17,MUTED)
+	center("倒下结束本局，再来一次换个流派。" if dead else ("12 个开发故障全部解决。" if won else "按 Tab 查看技能，Home 打开作弊面板。"),Vector2(640,414),17,MUTED)
 	button(Rect2(470,440,340,60),"新的一局 · R" if dead or won else "继续救场 · Enter",true)
 	button(Rect2(470,518,340,48),"返回标题",false)
+
+func cheat_panel() -> void:
+	scrim()
+	panel(Rect2(350,145,580,435),Color("102831"),Color("7b9b82"))
+	pixel("DEBUG / CHEATS",Vector2(400,192),10,CORAL)
+	text("毅川的调试工具",Vector2(400,241),32,CREAM,game.display_font)
+	var labels: Array[String] = ["1 · 无敌 / 不受伤害","2 · 一击必杀 / 包括 Boss"]
+	var enabled: Array[bool] = [game.cheat_invincible,game.cheat_one_hit]
+	for i in range(2):
+		panel(Rect2(400,285 + i * 85,480,65),Color("23463f") if enabled[i] else Color("142c36"),MINT if enabled[i] else Color("506e64"))
+		text(labels[i],Vector2(421,325 + i * 85),20,CREAM)
+		text("已开启" if enabled[i] else "已关闭",Vector2(788,325 + i * 85),17,MINT if enabled[i] else MUTED)
+	center("开启任一选项后，本局不计入难度纪录。",Vector2(640,470),15,MUTED)
+	button(Rect2(470,495,340,52),"返回 · Home / Esc",true)

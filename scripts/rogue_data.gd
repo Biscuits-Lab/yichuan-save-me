@@ -2,19 +2,38 @@ class_name RogueData
 extends RefCounted
 
 const CHAPTERS: Array[String] = ["同步荒原", "脚本深井", "版本牢城", "渲染天守"]
+const DIFFICULTIES: Array[Dictionary] = [
+	{"id":"casual","name":"休闲","health":12,"enemy_health":0.75,"extra_enemies":-1,"tempo":0.85,"damage_bonus":0,"desc":"12 生命 · 较少敌人\n进攻节奏更宽松"},
+	{"id":"standard","name":"标准","health":8,"enemy_health":1.0,"extra_enemies":0,"tempo":1.0,"damage_bonus":0,"desc":"8 生命 · 标准敌人\n适合正常救场"},
+	{"id":"hard","name":"硬核","health":6,"enemy_health":1.35,"extra_enemies":1,"tempo":1.15,"damage_bonus":1,"desc":"6 生命 · 更多敌人\n敌人更强、进攻更快"}
+]
+const ENVIRONMENTS: Dictionary = {
+	"ugs":{"name":"雪夜同步站","sky":Color("101f35"),"stone":Color("233e51"),"trim":Color("8ebbc9"),"accent":Color("8ed5e6"),"weather":"snow","motif":"rail"},
+	"ddc":{"name":"琥珀缓存库","sky":Color("241e20"),"stone":Color("463b2a"),"trim":Color("baa072"),"accent":Color("e6be78"),"weather":"dust","motif":"archive"},
+	"shader":{"name":"紫晶编译炉","sky":Color("211831"),"stone":Color("382b4d"),"trim":Color("a48fc1"),"accent":Color("cc9dee"),"weather":"spark","motif":"crystal"},
+	"script":{"name":"浮空脚本寺","sky":Color("1f203e"),"stone":Color("37374f"),"trim":Color("aaa1cb"),"accent":Color("c3b3f0"),"weather":"rune","motif":"scroll"},
+	"live":{"name":"赤焰热重载厂","sky":Color("301a1b"),"stone":Color("4a2e2b"),"trim":Color("b17b5a"),"accent":Color("f4a06c"),"weather":"ember","motif":"forge"},
+	"gc":{"name":"苔绿回收林","sky":Color("172b23"),"stone":Color("2e4131"),"trim":Color("8ca981"),"accent":Color("b6d59b"),"weather":"firefly","motif":"tree"},
+	"p4":{"name":"寒铁版本牢","sky":Color("112931"),"stone":Color("29434a"),"trim":Color("81a9ad"),"accent":Color("8cdce6"),"weather":"rain","motif":"chain"},
+	"leak":{"name":"泄漏荧光沼","sky":Color("132a26"),"stone":Color("293c35"),"trim":Color("75ab83"),"accent":Color("8ae5a1"),"weather":"spore","motif":"pipe"},
+	"net":{"name":"雷雨延迟港","sky":Color("142539"),"stone":Color("283d50"),"trim":Color("85afc9"),"accent":Color("92cffa"),"weather":"rain","motif":"antenna"},
+	"nanite":{"name":"青玉装配峡","sky":Color("152b30"),"stone":Color("2c4545"),"trim":Color("8abbb2"),"accent":Color("9de9d6"),"weather":"shard","motif":"cube"},
+	"lumen":{"name":"金镜反射城","sky":Color("302b27"),"stone":Color("48443b"),"trim":Color("c5bb98"),"accent":Color("f3dea1"),"weather":"light","motif":"mirror"},
+	"boss":{"name":"绯红构建天守","sky":Color("2b1926"),"stone":Color("44303b"),"trim":Color("ac7c86"),"accent":Color("f29c91"),"weather":"ember","motif":"citadel"}
+}
 const EVENTS: Array[Dictionary] = [
-	{"tool":"UGS", "title":"同步死锁", "boss":"冲突监工", "kind":"ugs", "color":Color("e6ad74"), "rule":"同步包交叉火力；修复两处节点", "hazard":"pulse"},
+	{"tool":"UGS", "title":"同步死锁", "boss":"冲突监工", "kind":"ugs", "color":Color("e6ad74"), "rule":"清空三个同步战区，节点自动恢复", "hazard":"pulse"},
 	{"tool":"DDC", "title":"缓存迷宫", "boss":"缓存吞噬者", "kind":"ddc", "color":Color("d9b574"), "rule":"缓存宝箱含额外工单，也可能惊醒拟态怪", "hazard":"cache"},
-	{"tool":"Shader", "title":"编译洪流", "boss":"万象编译师", "kind":"shader", "color":Color("b8a0e5"), "rule":"编译喷口周期点燃；先看地面预警", "hazard":"vent"},
-	{"tool":"AngelScript", "title":"脚本深井", "boss":"空引用咒师", "kind":"script", "color":Color("b6a3e0"), "rule":"幽灵悬浮施法；上层节点需要二段跳", "hazard":"pulse"},
-	{"tool":"Live Coding", "title":"热重载熔炉", "boss":"模块熔铸龙", "kind":"live", "color":Color("f39c75"), "rule":"机械龙蓄力突进；用冲刺穿过火线", "hazard":"vent"},
+	{"tool":"Shader", "title":"编译洪流", "boss":"万象编译师", "kind":"shader", "color":Color("b8a0e5"), "rule":"晶体法师标记施法落点；留意敌人蓄力", "hazard":"heat"},
+	{"tool":"AngelScript", "title":"脚本深井", "boss":"空引用咒师", "kind":"script", "color":Color("b6a3e0"), "rule":"幽灵悬浮施法；高台藏有可选补给", "hazard":"pulse"},
+	{"tool":"Live Coding", "title":"热重载熔炉", "boss":"模块熔铸龙", "kind":"live", "color":Color("f39c75"), "rule":"机械龙蓄力突进；用冲刺穿过火线", "hazard":"heat"},
 	{"tool":"GC", "title":"回收风暴", "boss":"对象收割者", "kind":"gc", "color":Color("c0c5a5"), "rule":"自然能量恢复减慢，击杀返还能量增加", "hazard":"vacuum"},
 	{"tool":"P4", "title":"独占检出", "boss":"只读典狱长", "kind":"p4", "color":Color("81c9d6"), "rule":"锁甲正面减伤；K 断点领域可以破锁", "hazard":"pulse"},
 	{"tool":"Memory", "title":"泄漏沼泽", "boss":"无限增长之物", "kind":"leak", "color":Color("8bce9c"), "rule":"泄漏软泥死亡后分裂；先清小怪", "hazard":"poison"},
 	{"tool":"Network", "title":"高延迟边境", "boss":"超时信使", "kind":"net", "color":Color("8bc7ed"), "rule":"延迟弹先悬停再发射；操作响应保持正常", "hazard":"delayed"},
-	{"tool":"Nanite", "title":"装配碎境", "boss":"三角破坏神", "kind":"nanite", "color":Color("8ed2c9"), "rule":"碎片区域有坍塌预警，保持移动", "hazard":"collapse"},
+	{"tool":"Nanite", "title":"装配碎境", "boss":"三角破坏神", "kind":"nanite", "color":Color("8ed2c9"), "rule":"浮空构造体远程攻击；峡谷高台可选探索", "hazard":"collapse"},
 	{"tool":"Lumen", "title":"反射幻城", "boss":"流明灯蛾王", "kind":"lumen", "color":Color("f0d08a"), "rule":"灯蛾释放环形光弹；利用上下层躲避", "hazard":"light"},
-	{"tool":"BUILD", "title":"最后一次打包", "boss":"打包失败·百次重试", "kind":"boss", "color":Color("ed8d82"), "rule":"服务器鬼武者：扇形弹幕、冲击波与近战", "hazard":"vent"}
+	{"tool":"BUILD", "title":"最后一次打包", "boss":"打包失败·百次重试", "kind":"boss", "color":Color("ed8d82"), "rule":"服务器鬼武者：扇形弹幕、冲击波与近战", "hazard":"heat"}
 ]
 const NPCS: Array[Dictionary] = [
 	{"name":"若宇", "quote":"我这显示是对的", "role":"显示正常的技术美术", "offer":"先喝咖啡：免费恢复 2 点生命和 30 能量。", "button":"检查显示并补给", "color":Color("9fdbc1")},

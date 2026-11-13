@@ -24,7 +24,7 @@ func clear_mobs() -> void:
 			if is_instance_valid(bug) and not bug.dead and not bug.is_boss:
 				bug.take_hit(9999,1,true)
 		await frames()
-		if game.enemies.is_empty():
+		if not game.enemies.any(func(bug): return is_instance_valid(bug) and not bug.dead and not bug.is_boss):
 			return
 	check(false,"Mob wave must terminate, including memory-leak splits")
 
@@ -72,6 +72,8 @@ func run() -> void:
 	check(game.player.jumps == 2 and game.player.velocity.y < 0,"Double jump works")
 	await frames(60)
 	# Every named NPC offers a different, single-use service.
+	game.room_phase = "test_services"
+	game.npcs.append({"id":0,"p":Vector2(680,600),"used":false})
 	for id in range(4):
 		game.npcs[0].id = id
 		game.npcs[0].used = false
@@ -103,7 +105,7 @@ func run() -> void:
 	check(game.state == "npc" and not game.npcs[0].used,"Insufficient funds do not apply a paid NPC service")
 	game.state = "playing"
 	game.room_wave = 1
-	game.room_phase = "relay"
+	game.room_phase = "combat"
 	game.npcs[0].id = 1
 	game.npcs[0].used = false
 	var adds_before: int = game.enemies.size()
@@ -169,25 +171,23 @@ func run() -> void:
 		boss.dead = true
 		boss.queue_free()
 		await frames()
-	# Exercise the complete twelve-room campaign through both waves and relays.
+	# Exercise the complete twelve-room campaign through six waves and three
+	# automatic gates. No interaction or return to a relay is used.
 	game.start_run("story",9876)
 	await frames()
 	for room in range(12):
 		game.player.invulnerable = 999
-		game.spawn_wave(0)
-		game.player.position = game.room_data.relays[0].p
-		game.interact()
-		check(game.relay_count == 0,"Room %d cannot skip its first combat wave" % (room + 1))
-		await clear_mobs()
-		check(game.room_phase == "relay","Room %d first wave unlocks a relay" % (room + 1))
-		game.player.position = game.room_data.relays[0].p
-		game.player.velocity = Vector2.ZERO
-		game.interact()
-		check(game.relay_count == 1 and game.room_wave == 1,"Room %d first relay starts a second wave" % (room + 1))
-		await clear_mobs()
-		game.player.position = game.room_data.relays[1].p
-		game.player.velocity = Vector2.ZERO
-		game.interact()
+		for zone in range(game.room_data.zones.size()):
+			game.player.position = Vector2(game.room_data.zones[zone].trigger + 35,598)
+			game.player.velocity = Vector2.ZERO
+			await frames(4)
+			check(game.room_phase == "combat" and not game.gates[zone].open,"Room %d zone %d remains locked during combat" % [room + 1,zone + 1])
+			await clear_mobs()
+			check(not game.gates[zone].open and game.room_phase == "reinforce","Reinforcements must be cleared before opening the gate")
+			await frames(60)
+			check(game.room_wave == zone * 2 + 1 and not game.enemies.is_empty(),"Each area contains a real second wave")
+			await clear_mobs()
+			check(game.gates[zone].open and game.relay_count == zone + 1,"Clearing the area opens its gate automatically without E")
 		check(is_instance_valid(game.boss_ref) and game.boss_ref.is_boss,"Room %d has its own final boss" % (room + 1))
 		game.boss_ref.take_hit(99999,1,true)
 		await frames()

@@ -95,7 +95,6 @@ func run() -> void:
 	var floor_rect := Rect2(0,600,3520,200)
 	game.platforms.append(floor_rect)
 	game.add_solid(floor_rect)
-	game.room_data.traps = []
 	game.coffee.clear()
 	game.room_phase = "motion_test"
 	game.player.position = Vector2(1600,600)
