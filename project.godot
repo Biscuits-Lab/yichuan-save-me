@@ -1,10 +1,10 @@
-; 毅川救我 — Godot 4 action platformer
+; 毅川救我 — top-down automatic-combat dungeon roguelite
 config_version=5
 
 [application]
 config/name="毅川救我"
-config/version="0.3.0"
-config/description="一位虚幻开发师，一把断点刀，一个不能崩溃的夜晚。"
+config/version="0.4.2"
+config/description="自动战斗、随机地牢、武器合并。击败策划杨梓亮，救回 ChatGPT 公主。"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.5", "GL Compatibility")
 config/icon="res://assets/icon.svg"
