@@ -174,7 +174,7 @@ func run() -> void:
 	await snap("dungeon-10-corridor")
 	game.current_room().cleared = true
 	for room in game.rooms:
-		if room.type == "combat" and room.rect.size.x > 1250:
+		if room.type == "combat" and room.rect.size.x > 1000:
 			game.enter_room(room.id)
 			break
 	game.invulnerable = 999
@@ -184,6 +184,20 @@ func run() -> void:
 	await snap("dungeon-12-camera-east")
 	for direction in range(4):
 		await door_preview(direction)
+	game.floor_index = 2
+	game.generate_floor()
+	var compact_room: int = -1
+	for room in game.rooms:
+		if room.type == "combat" and (compact_room < 0 or room.rect.get_area() < game.rooms[compact_room].rect.get_area()):
+			compact_room = room.id
+	game.enter_room(compact_room)
+	game.enemies.clear()
+	game.spawn_wave()
+	for enemy in game.enemies:
+		enemy.age = 2
+	game.speech_time = 0
+	game.message_time = 0
+	await snap("dungeon-17-compact-battle")
 	game.state = "won"
 	await snap("dungeon-09-ending")
 	game.queue_free()

@@ -67,13 +67,21 @@ func test_generation() -> void:
 			var sizes: Dictionary = {}
 			var safe_npcs: bool = true
 			var compact_npcs: bool = true
+			var compact_combat: bool = true
 			for room in rooms:
 				sizes[str(room.rect.size)] = true
 				safe_npcs = safe_npcs and ((room.npc >= 0) == (room.type == "npc"))
 				if room.type == "npc":
 					compact_npcs = compact_npcs and room.rect.size.x >= 512 and room.rect.size.x <= 576 and room.rect.size.y >= 352 and room.rect.size.y <= 416
+				elif room.type == "combat":
+					compact_combat = compact_combat and room.rect.size.x >= 800 and room.rect.size.x <= 1152 and room.rect.size.y >= 544 and room.rect.size.y <= 736
+				elif room.type == "elite":
+					compact_combat = compact_combat and room.rect.size == Vector2(1152, 768)
+				elif room.type == "boss":
+					compact_combat = compact_combat and room.rect.size == Vector2(1344, 896)
 			check(safe_npcs, "NPCs never populate combat, elite, boss, shop or ordinary rooms")
 			check(compact_npcs, "NPC meeting rooms use compact dimensions with room for exits and interaction")
+			check(compact_combat, "Combat, elite and boss rooms use the smaller battle footprints")
 			check(sizes.size() >= 3, "Each floor mixes small, medium and large physical rooms")
 			var connected: bool = true
 			for hall in generated.corridors:
@@ -243,6 +251,40 @@ func test_floor_geometry_and_restart() -> void:
 	game.start_run(51, true)
 	check(game.room_id == 0 and game.current_room().type == "start" and game.enemies.is_empty() and game.player == game.room_center(), "Restart clears old enemies and resets the active room and spawn")
 	print("Floor geometry and restart checks complete")
+
+func test_compact_room_population() -> void:
+	var normal_counts: Array = [[12, 16], [15, 19], [18, 22]]
+	for seed_number in [7, 51, 20261113]:
+		for floor_number in range(3):
+			safe_start(seed_number)
+			game.floor_index = floor_number
+			game.generate_floor()
+			for room in game.rooms:
+				if room.type not in ["combat", "elite"]:
+					continue
+				game.current_room().cleared = true
+				game.enemies.clear()
+				game.enter_room(room.id)
+				for wave_index in range(2):
+					if wave_index == 1:
+						game.enemies.clear()
+						game.spawn_wave()
+					var expected: int = normal_counts[floor_number][wave_index] + (4 if room.type == "elite" else 0)
+					check(game.enemies.size() == expected, "Smaller rooms spawn the increased population for their floor and wave")
+					var safe: bool = true
+					var separated: bool = true
+					var reachable: bool = true
+					for enemy in game.enemies:
+						safe = safe and game.walkable(enemy.p, enemy.radius) and enemy.p.distance_to(game.player) > 230
+						var path: PackedVector2Array = game.nav.get_point_path(game.nav_cell(enemy.p), game.nav_cell(game.player))
+						reachable = reachable and path.size() > 1
+						for other in game.enemies:
+							if other != enemy:
+								separated = separated and enemy.p.distance_to(other.p) >= enemy.radius + other.radius
+					check(safe, "Dense wave spawns remain inside clear floor space away from the player")
+					check(separated, "Dense waves do not begin with overlapping enemy bodies")
+					check(reachable, "Every enemy in the denser small-room waves can navigate to the player")
+	print("Compact rooms and denser waves checks complete")
 
 func test_combat() -> void:
 	for spec in game.Data.WEAPONS:
@@ -724,7 +766,7 @@ func test_room_shops_and_skills() -> void:
 	safe_start()
 	for floor_number in range(3):
 		game.floor_index = floor_number
-		for room_size in [Vector2(960, 640), Vector2(1792, 1216)]:
+		for room_size in [Vector2(800, 544), Vector2(1152, 736)]:
 			for layout in range(5):
 				for rect in game.Data.obstacles(layout, "combat", Rect2(Vector2.ZERO, room_size)):
 					var drawn: Rect2 = game.view.cover_draw_rect(rect)
@@ -824,6 +866,7 @@ func run() -> void:
 	test_motion_and_rooms()
 	test_continuous_traversal()
 	test_floor_geometry_and_restart()
+	test_compact_room_population()
 	test_combat()
 	test_enemy_behaviour()
 	test_inventory_and_economy()

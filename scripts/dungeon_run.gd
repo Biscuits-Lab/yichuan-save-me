@@ -448,18 +448,29 @@ func spawn_wave() -> void:
 		build_navigation(35)
 		notify("精英首领 · 大鲨鱼")
 		return
-	var count: int = 4 + floor_index * 2 + wave * 2 + (2 if current_room().type == "elite" else 0)
+	var count: int = 8 + floor_index * 3 + wave * 4 + (4 if current_room().type == "elite" else 0)
 	for i in range(count):
 		var kind: String = "ranged" if i % 4 == 3 else ("charger" if i % 5 == 4 else "slime")
 		spawn_enemy(spawn_point(), kind)
 	notify("%s · 第 %d / %d 波" % [Data.ROOM_NAMES[current_room().type], wave, wave_total])
 
 func spawn_point(radius: float = 23.0) -> Vector2:
+	var fallback: Vector2 = room_center() + Vector2(220, 0) if player.x < room_center().x else room_center() - Vector2(220, 0)
+	var best_gap: float = -INF
 	for attempt in range(150):
 		var p := Vector2(rng.randf_range(current_room().rect.position.x + 65, current_room().rect.end.x - 65), rng.randf_range(current_room().rect.position.y + 75, current_room().rect.end.y - 65))
-		if walkable(p, radius) and p.distance_to(player) > 230:
+		if not walkable(p, radius) or p.distance_to(player) <= 230:
+			continue
+		var gap: float = INF
+		for enemy in enemies:
+			if not enemy.dead:
+				gap = minf(gap, p.distance_to(enemy.p) - radius - enemy.radius - 10)
+		if gap >= 0:
 			return p
-	return room_center() + Vector2(220, 0) if player.x < room_center().x else room_center() - Vector2(220, 0)
+		if gap > best_gap:
+			best_gap = gap
+			fallback = p
+	return fallback
 
 func spawn_enemy(p: Vector2, kind: String = "slime") -> Dictionary:
 	if current_room().type == "npc":

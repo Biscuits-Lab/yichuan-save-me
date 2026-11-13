@@ -3,7 +3,7 @@ extends RefCounted
 
 const ARENA := Rect2(20, 44, 1240, 656)
 const CENTER := Vector2(640, 372)
-const CELL_SPACING := Vector2(1840, 1320)
+const CELL_SPACING := Vector2(1408, 1024)
 const CORRIDOR_WIDTH: float = 176.0
 const DIRECTIONS: Array[Vector2i] = [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]
 const DOORS: Array[Vector2] = [Vector2(640, 44), Vector2(1260, 372), Vector2(640, 700), Vector2(20, 372)]
@@ -124,16 +124,16 @@ static func generate(seed_value: int, floor_index: int) -> Dictionary:
 			var pick: int = rng.randi_range(0, npc_pool.size() - 1)
 			room.npc = npc_pool[pick]
 			npc_pool.remove_at(pick)
-		var sizes: Array[Vector2] = [Vector2(960, 640), Vector2(1280, 832), Vector2(1536, 1056), Vector2(1792, 1216)]
+		var sizes: Array[Vector2] = [Vector2(800, 544), Vector2(896, 608), Vector2(1024, 672), Vector2(1152, 736)]
 		var size: Vector2 = sizes[rng.randi_range(0, sizes.size() - 1)]
 		if room.type in ["start", "npc", "rest", "shop", "treasure"]:
 			size = Vector2(864, 608) if room.type == "start" else Vector2(736 + rng.randi_range(0, 2) * 96, 544 + rng.randi_range(0, 1) * 96)
 			if room.type == "npc":
 				size = Vector2(512 + rng.randi_range(0, 1) * 64, 352 + rng.randi_range(0, 1) * 64)
 		elif room.type == "boss":
-			size = Vector2(1792, 1216)
+			size = Vector2(1344, 896)
 		elif room.type == "elite":
-			size = Vector2(1536, 1056)
+			size = Vector2(1152, 768)
 		room["center"] = CENTER + Vector2(room.cell) * CELL_SPACING
 		room["rect"] = Rect2(room.center - size / 2, size)
 		room["doors"] = door_points(room.rect)
