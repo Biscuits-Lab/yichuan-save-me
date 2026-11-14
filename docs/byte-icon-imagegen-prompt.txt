@@ -1,0 +1,5 @@
+Tool: built-in image_gen; transparent_background=true.
+Output: assets/generated/dungeon/icons/byte.png; 1254 x 1254 RGBA.
+Usage: byte currency HUD, inventory/shop balance, world pickups.
+
+Use case: stylized-concept. Asset type: one standalone transparent PNG currency icon for the pixel-art top-down office dungeon roguelite 毅川救我. Primary request: a BYTE currency pickup and HUD icon, a small square mint-green data microchip with short gold connector pins on all four edges, dark charcoal outline, a crisp eight-cell 2-by-4 data grid on its face. Style: hand-painted pixel-art inventory sprite, chunky readable pixel clusters, subtle dimensional highlights, restrained detail, matches warm playful office equipment inventory art. Front view with a very slight top-down tilt, one chip only, centered, fills about 75 percent of a square canvas with generous transparent padding, easy to recognize at 18 and 24 pixels. Colors mint green #85e0b9 and warm pale gold #ffca80 with dark navy #101922 outlines. Genuinely transparent alpha background. No text, letters, digits, coins, currency signs, background, glow, UI frames, drop shadow or watermark.
