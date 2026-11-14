@@ -1,10 +1,10 @@
-; 毅川救我 — top-down automatic-combat dungeon roguelite
+; 毅川救我 — dungeon roguelite and side-view sandbox survival
 config_version=5
 
 [application]
 config/name="毅川救我"
-config/version="0.4.7"
-config/description="自动战斗、随机地牢、武器合并。击败策划杨梓亮，救回 ChatGPT 公主。"
+config/version="0.5.1"
+config/description="地牢救援与 2D 沙盒双模式。神父每 5 个游戏日到访；通过高难 Code Review，免费任选一件物资。"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.5", "GL Compatibility")
 config/icon="res://assets/icon.svg"

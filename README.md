@@ -1,16 +1,31 @@
-# 毅川救我 · 公主抢救计划
+# 毅川救我 · 地牢与像素旷野
 
-v0.4.7 将游戏重做为俯视角自动战斗肉鸽。策划杨梓亮抢走了毅川的 ChatGPT 公主，穿过办公室、迭代工坊和策划城堡，将她救回来。
+v0.5.1 提供独立的横版 2D 沙盒「像素旷野」：随机世界、挖矿建造、采集制作、昼夜生存，以及每 5 个游戏日到访的 CTO 神父。本次修复确认框点击穿透、备份恢复、回城定位、死亡读档和交易保存失败等问题，并加入高难 Code Review 翻牌小游戏。原有俯视角地牢保留：穿过办公室、迭代工坊和策划城堡，救回 ChatGPT 公主。
 
 ## 运行
 
-下载：[v0.4.7 Windows 版](https://github.com/Biscuits-Lab/yichuan-save-me/releases/tag/v0.4.7)。
+此前发布的地牢版：[v0.4.7 Windows 版](https://github.com/Biscuits-Lab/yichuan-save-me/releases/tag/v0.4.7)。v0.5.1 为当前源码与本地构建，尚未发布到 GitHub Release。
 
-双击 `开始游戏.cmd`，或运行 `build/windows-v0.4.7/毅川救我.exe`。Windows 版资源内嵌，可独立运行，无需安装 Godot。便携包：`build/毅川救我-v0.4.7-公主抢救计划-Windows-x64.zip`。
+双击 `开始游戏.cmd`。启动脚本优先运行 `build/windows-v0.5.1/毅川救我.exe`，没有构建时使用项目内 Godot 运行源码。Windows 版资源内嵌，可独立运行，无需安装 Godot。便携包：`build/毅川救我-v0.5.1-地牢与沙盒-Windows-x64.zip`。
 
 源码使用 Godot 4.5.2，打开 `project.godot` 后按 F5。缺少运行时可运行 `python tools/bootstrap.py`。
 
-## 玩法
+## 沙盒模式 · 像素旷野
+
+在主菜单点击「像素旷野 · 2D 沙盒生存」，或按 B。首次创建随机世界，之后可继续独立沙盒存档。
+
+- 576×192 格可编辑世界，每格 24 像素。森林、沙丘、雪原、随机洞穴、铜铁煤矿与深层水晶；出生地右侧有通向地下的洞口。
+- A / D、左右方向键移动；空格 / W / ↑ 跳跃。1 号镐长按鼠标左键挖掘，砍断树干可收集上方原木。数字键与滚轮切换快捷栏，选中方块后右键放置。背包里点击其他方块可装入当前快捷格。
+- Tab / I 打开背包与制作；E 与附近神父交易，其他位置打开制作。先用 8 原木制作工作台，放在地上，再靠近制作熔炉。熔炉消耗矿石与煤炭生成铜锭、铁锭。基础镐 → 铜镐 → 铁镐依次解锁铁矿、水晶与大地之心。
+- J 随时挥剑，选中 2 号剑也可长按左键攻击；H 消耗治疗药水恢复 45 生命。10 分钟一轮昼夜，夜间与地下怪物更强。火把提供照明。倒下可复活，保留背包和建筑。
+- 击败怪物可获得凝胶与旧银币。神父在**游戏内第 5、10、15……天**来到出生地左侧，每次停留一个游戏日；暂停、背包、商店和 Code Review 不推进世界时间。神父采用《血源诅咒》加斯科因神父的猎人形象，身份栏显示 CTO。出售火把、药水、原木、煤炭、铜铁矿石、猎人提灯与神父护符。提灯扩大随身照明，护符增加 20 生命上限。每次到访补货，购买记录随世界保存，同次到访重开交易或读档不会补货。
+- 神父购买界面提供 **Code Review** 彩蛋：20 张牌、10 组开发 Bug，限时 60 秒、最多 16 回合。全部配对显示「Code Review 通关」，可从货架免费任选 **1 个物品**。每次到访可领取一次，未领取的胜利资格随存档保留；已经拥有的唯一装备不能重复领，领取失败可以重试。
+- M 查看带探索迷雾的地图，R 返回出生地，Esc 暂停，F1 查看指南，F5 保存。每 30 秒自动保存，退出前保存。沙盒使用 `user://sandbox-v1.save`，独立于地牢纪录；写入临时文件并保留一份滚动备份，主存档损坏时尝试恢复备份。当前提供一个世界槽，新建世界前有替换确认。
+- 收集深处的大地之心、12 水晶与 4 铁锭，在工作台旁制作归途信标，放在地表完成探索；之后可以继续建造。
+
+这是沙盒首版，包含采集、制作、建造与生存循环；暂不包含液体流动、联网、NPC 住房、农业或泰拉瑞亚的完整 Boss 体系。架构、资源与验证说明见 [docs/sandbox-mode.md](docs/sandbox-mode.md)。
+
+## 地牢模式玩法
 
 - 战场铺满窗口，没有文字侧栏；右上角小地图用灰色表示未去过的房间、绿色表示已去过、金色表示当前房间，白点跟随角色位置。WASD / 方向键移动，武器自动瞄准攻击，空格 / Shift 无敌冲刺。
 - 三层地牢分别生成 10、11、12 个四向连接的房间。普通怪物房缩小为 800×544 到 1152×736，精英房为 1152×768，关底房为 1344×896，NPC 会客室保持 512–576×352–416；保留随机大小和布局，房间间距同步收紧。房间之间有真实的 176 像素宽走廊，同一层内可连续步行，不重置角色位置；镜头平滑跟随角色，HUD 固定在屏幕上。第一层为办公室，后两层为工坊和城堡。
@@ -61,15 +76,20 @@ v0.4.7 将游戏重做为俯视角自动战斗肉鸽。策划杨梓亮抢走了�
 
 启用过调试辅助的本局不写入普通纪录。
 
-## 美术
+## 地牢美术
 
 角色、NPC、公主、首领、怪物、武器装备、墙体和地图道具均使用内置 **imagegen** 生成，并实际接入游戏。刀光、命中火花、魔法爆发、冲刺拖尾使用逐帧像素图集，弹丸、枪口火焰、护盾和蓄力预警也使用生成贴图；这些世界美术不使用矢量线条、圆环或多边形绘制。武器带后坐与轻微命中镜头震动。办公桌采用固定尺寸并保持原图比例，大型摆放使用多张桌子组合。入口不再绘制大门。素材在 `assets/generated/dungeon/`；图集映射、生成提示词和限制见 `docs/dungeon-art.md`。中文和按钮由引擎绘制。
+
+沙盒复用毅川和怪物图集；方块、物品图标与远景使用代码生成的像素贴图，神父使用新增的 imagegen 透明立绘。提示词与实现说明见 `docs/sandbox-mode.md`。
 
 ## 验证与打包
 
 ```powershell
-.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file D:/Work/VibeCoding/game/.tools/dungeon-tests.log --fixed-fps 60 --script tools/test_dungeon.gd -- --no-audio
-.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --path . --log-file D:/Work/VibeCoding/game/.tools/dungeon-render.log --audio-driver Dummy --fixed-fps 60 --script tools/render_dungeon.gd -- --no-audio
+.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file .tools/sandbox-tests.log --script tools/test_sandbox.gd -- --no-audio
+.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file .tools/mode-tests.log --script tools/test_modes.gd -- --no-audio
+.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file .tools/dungeon-tests.log --script tools/test_dungeon.gd -- --no-audio
+.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --path . --log-file .tools/sandbox-render.log --audio-driver Dummy --script tools/render_sandbox.gd -- --no-audio
+.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --path . --log-file .tools/sandbox-audit.log --audio-driver Dummy --script tools/test_sandbox_regressions.gd -- --no-audio
 python tools/build_windows.py
 ```
 

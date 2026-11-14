@@ -305,9 +305,9 @@ func cover_art(rect: Rect2) -> void:
 
 func title_screen() -> void:
 	micro("YICHUAN / PRINCESS RESCUE", Vector2(68, 55), MINT, 9)
-	micro("V 0.4", Vector2(1138, 55), MUTED, 9)
+	micro("V 0.5", Vector2(1138, 55), MUTED, 9)
 	box(Rect2(68, 105, 180, 30), Color("223a36"), Color("45675b"), 15)
-	text("俯视角自动战斗肉鸽", Vector2(82, 126), 16, MINT)
+	text("双模式 · 地牢 / 沙盒", Vector2(82, 126), 16, MINT)
 	text("毅川救我", Vector2(63, 222), 74, WHITE, true)
 	text("公主抢救计划", Vector2(68, 273), 35, MINT, true)
 	text("从杨梓亮手里，救回 ChatGPT 公主。", Vector2(70, 324), 22, MUTED)
@@ -342,9 +342,7 @@ func title_screen() -> void:
 	for i in range(3):
 		stamp(7, Vector2(744 + i * 124, 536), Vector2.ONE * 13)
 	micro("MOVE. AUTO ATTACK. FUSE. RESCUE.", Vector2(667, 577), MUTED, 8)
-	text("随机地牢", Vector2(654, 645), 20, WHITE, true)
-	text("六武器构筑", Vector2(842, 645), 20, WHITE, true)
-	text("同装合并", Vector2(1064, 645), 20, WHITE, true)
+	button(Rect2(648, 611, 544, 49), "像素旷野 · 2D 沙盒生存  →  B", "sandbox")
 	draw_line(Vector2(68, 685), Vector2(1210, 685), LINE)
 	text("WASD 移动 / 自动攻击 / 空格冲刺", Vector2(68, 708), 14, MUTED)
 	text("最高累计积分 %d  ·  通关层数 %d / 3" % [game.best_score, game.best_floor], Vector2(884, 708), 14, MUTED)
@@ -699,6 +697,7 @@ func click(p: Vector2) -> void:
 		if entry.state != game.state or not entry.rect.has_point(p):
 			continue
 		match entry.action:
+			"sandbox": game.start_sandbox()
 			"weapon": game.selected_weapon = entry.index
 			"difficulty": game.difficulty = entry.index
 			"start", "restart": game.start_run()

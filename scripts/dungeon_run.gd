@@ -1221,6 +1221,9 @@ func toggle_inventory() -> void:
 		return_state = state
 		state = "inventory"
 
+func start_sandbox() -> void:
+	get_tree().change_scene_to_file("res://scenes/sandbox.tscn")
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		view.click(get_viewport().get_mouse_position())
@@ -1264,6 +1267,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif state == "title":
 		if code == KEY_ENTER:
 			start_run()
+		elif code == KEY_B:
+			start_sandbox()
 		elif code in [KEY_LEFT, KEY_A]:
 			selected_weapon = posmod(selected_weapon - 1, 4)
 		elif code in [KEY_RIGHT, KEY_D]:
