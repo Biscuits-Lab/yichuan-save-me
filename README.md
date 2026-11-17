@@ -1,12 +1,12 @@
 # 毅川救我 · 地牢与像素旷野
 
-v0.5.1 包含七层主题地牢与独立的横版 2D 沙盒「像素旷野」。地牢穿过办公室、工坊、霓虹机房、温室、牛来的森林与草地、山田的相扑道场和策划城堡，救回 ChatGPT 公主；沙盒提供随机世界、挖矿建造、采集制作、昼夜生存，以及每 5 个游戏日到访的 CTO 神父与高难 Code Review 翻牌小游戏。
+v0.6.1 包含七层主题地牢与独立横版 2D 沙盒「像素旷野」。沙盒复用地牢和早期横版的怪物资源，加入 19 类怪物、8 场 Boss、困难世界矿脉、住房与 NPC、远程与魔法、种植、钓鱼、水和熔岩。从砍树建家到最终救回 ChatGPT 公主，构成一条独立成长线；CTO 神父仍每 5 个游戏日到访，保留高难 Code Review 彩蛋。修复版补上地下床重生、住房去重与站位、幼苗掉落及重复 Boss 转阶段的问题。
 
 ## 运行
 
-下载：[v0.5.1 Windows 版](https://github.com/Biscuits-Lab/yichuan-save-me/releases/tag/v0.5.1)。EXE 可直接运行；ZIP 包含游戏、说明和许可文件。
+当前本地构建为 v0.6.1，EXE 可直接运行；ZIP 包含游戏、说明和许可文件。此前已发布版本：[v0.5.1 Windows 版](https://github.com/Biscuits-Lab/yichuan-save-me/releases/tag/v0.5.1)。
 
-双击 `开始游戏.cmd`。启动脚本优先运行 `build/windows-v0.5.1/毅川救我.exe`，没有构建时使用项目内 Godot 运行源码。Windows 版资源内嵌，可独立运行，无需安装 Godot。便携包：`build/毅川救我-v0.5.1-地牢与沙盒-Windows-x64.zip`。
+双击 `开始游戏.cmd`。启动脚本优先运行 `build/windows-v0.6.1/毅川救我.exe`，没有构建时使用项目内 Godot 运行源码。Windows 版资源内嵌，可独立运行，无需安装 Godot。便携包：`build/毅川救我-v0.6.1-地牢与沙盒-Windows-x64.zip`。
 
 源码使用 Godot 4.5.2，打开 `project.godot` 后按 F5。缺少运行时可运行 `python tools/bootstrap.py`。
 
@@ -14,16 +14,19 @@ v0.5.1 包含七层主题地牢与独立的横版 2D 沙盒「像素旷野」。
 
 在主菜单点击「像素旷野 · 2D 沙盒生存」，或按 B。首次创建随机世界，之后可继续独立沙盒存档。
 
-- 576×192 格可编辑世界，每格 24 像素。森林、沙丘、雪原、随机洞穴、铜铁煤矿与深层水晶；出生地右侧有通向地下的洞口。
+- 576×192 格可编辑世界，每格 24 像素。森林、沙丘、雪原、丛林、版本侵蚀区、深层洞窟、熔火地狱与海岸；地下有三处带物资箱的遗迹，以及生命水晶、金矿、熔火矿和星辉矿。击败构建之墙后生成秘银。
 - A / D、左右方向键移动；空格 / W / ↑ 跳跃。1 号镐长按鼠标左键挖掘，砍断树干可收集上方原木。数字键与滚轮切换快捷栏，选中方块后右键放置。背包里点击其他方块可装入当前快捷格。
-- Tab / I 打开背包与制作；E 与附近神父交易，其他位置打开制作。先用 8 原木制作工作台，放在地上，再靠近制作熔炉。熔炉消耗矿石与煤炭生成铜锭、铁锭。基础镐 → 铜镐 → 铁镐依次解锁铁矿、水晶与大地之心。
-- J 随时挥剑，选中 2 号剑也可长按左键攻击；H 消耗治疗药水恢复 45 生命。10 分钟一轮昼夜，夜间与地下怪物更强。火把提供照明。倒下可复活，保留背包和建筑。
+- Tab / I 打开分页背包与四类制作；工作台 → 熔炉 → 铁砧 → 祭坛。采掘镐 → 铜 → 铁 → 金 → 熔火 → 秘银逐级解锁资源；制作需要实际放下设施并靠近。
+- 木平台可向上跳穿、按 S 下穿；W / S 沿绳索攀爬。木门高两格，E 开关。住宅需封闭、内部至少 24 格、铺满背景墙，并有工作台、椅子、火把和门。F7 检查住房，满足成长条件后向导、若宇、海德骑士和嘉豪入住；床可设置重生点。
+- E 开箱，材料可批量存入 / 全部取出，非空箱不可拆除。药草种子 60 秒成熟，树种 180 秒生长；桶可搬运水和熔岩，液体向下及两侧流动，相遇生成黑曜石。水下需注意氧气，熔岩会造成持续伤害。钓竿向水面左键抛竿，咬钩后再次左键，鲜鱼可在篝火旁烤制。
+- J 挥剑，弓枪与法杖左键朝鼠标攻击，分别消耗弹药和魔力。11 种新武器包含长枪、巨斧、弓弩、手枪、霰弹枪、火 / 冰 / 过载法杖与召唤杖；6 套护甲和 5 件饰品提供防护、疾行、二段跳、Q 钩爪、飞行与熔岩减伤。生命水晶强化至 400、后期生命果至 500，魔力星强化至 200，另可叠加神父护符。
+- H 优先使用强效药水，否则使用普通药水，药水共用 45 秒冷却；烤鱼提供短期再生。10 分钟一轮昼夜，每逢第 4 倍数游戏日的夜间有血色加班夜；可制作入侵旗挑战有限 24 只怪物。倒下可复活，保留背包和建筑。
 - 击败怪物可获得凝胶与旧银币。神父在**游戏内第 5、10、15……天**来到出生地左侧，每次停留一个游戏日；暂停、背包、商店和 Code Review 不推进世界时间。神父采用《血源诅咒》加斯科因神父的猎人形象，身份栏显示 CTO。出售火把、药水、原木、煤炭、铜铁矿石、猎人提灯与神父护符。提灯扩大随身照明，护符增加 20 生命上限。每次到访补货，购买记录随世界保存，同次到访重开交易或读档不会补货。
 - 神父购买界面提供 **Code Review** 彩蛋：20 张牌、10 组开发 Bug，限时 60 秒、最多 16 回合。全部配对显示「Code Review 通关」，可从货架免费任选 **1 个物品**。每次到访可领取一次，未领取的胜利资格随存档保留；已经拥有的唯一装备不能重复领，领取失败可以重试。
 - M 查看带探索迷雾的地图，R 返回出生地，Esc 暂停，F1 查看指南，F5 保存。每 30 秒自动保存，退出前保存。沙盒使用 `user://sandbox-v1.save`，独立于地牢纪录；写入临时文件并保留一份滚动备份，主存档损坏时尝试恢复备份。当前提供一个世界槽，新建世界前有替换确认。
-- 收集深处的大地之心、12 水晶与 4 铁锭，在工作台旁制作归途信标，放在地表完成探索；之后可以继续建造。
+- 按 T 查看成长手册和怪物图鉴。Boss 顺序：故障凝胶王 → 风暴哨卫（夜间）→ 深渊大鲨鱼（侵蚀区）→ 地狱构建之墙（地狱，开启困难世界）→ 过载机械核心 → 荆棘母体（丛林）→ 山田横纲 → 杨梓亮终焉策划。用掉落升级装备并制作下一召唤物；可重复挑战补材料。归途信标是营地支线，最终战后救回公主，仍可自由建造。
 
-这是沙盒首版，包含采集、制作、建造与生存循环；暂不包含液体流动、联网、NPC 住房、农业或泰拉瑞亚的完整 Boss 体系。架构、资源与验证说明见 [docs/sandbox-mode.md](docs/sandbox-mode.md)。
+本轮范围按「PC 单人核心玩法与完整成长流程」实现，采用本作世界观、地图尺度和怪物。它没有达到《泰拉瑞亚》全部内容的 1:1：原版完整 Boss / 物品 / 生物群系数量、电路自动化、入侵种类及联机不在当前实现内。具体功能、成长表与差异见 [沙盒扩充说明](docs/sandbox-adventure.md)，架构见 [sandbox-mode.md](docs/sandbox-mode.md)。
 
 ## 地牢模式玩法
 
@@ -97,18 +100,23 @@ v0.5.1 包含七层主题地牢与独立的横版 2D 沙盒「像素旷野」。
 
 音频位于 `assets/audio/music/`，由本地合成生成，无外部采样。需要修改曲谱并重新生成时运行 `python tools/compose_floor_music.py`（生成工具需要 FFmpeg，游玩无需安装）。
 
-沙盒复用毅川和怪物图集；方块、物品图标与远景使用代码生成的像素贴图，神父使用新增的 imagegen 透明立绘。提示词与实现说明见 `docs/sandbox-mode.md`。
+沙盒复用毅川、怪物、NPC 与武器装备图集；方块、基础资源图标与远景使用代码生成的像素贴图，神父使用新增的 imagegen 透明立绘。提示词与实现说明见 `docs/sandbox-mode.md`。
 
 ## 验证与打包
 
+逻辑检查使用 `--headless`。GPU 渲染与鼠标交互在隔离的后台桌面运行，测试窗口不出现在使用者屏幕，也不切换活动桌面；结果以日志和图片保存。
+
 ```powershell
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file "$PWD/.tools/sandbox-tests.log" --script tools/test_sandbox.gd -- --no-audio
+.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file "$PWD/.tools/selfcheck-fixed.log" --script tools/test_sandbox_selfcheck.gd -- --no-audio
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file "$PWD/.tools/mode-tests.log" --script tools/test_modes.gd -- --no-audio
-.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --path . --log-file "$PWD/.tools/sandbox-render.log" --audio-driver Dummy --script tools/render_sandbox.gd -- --no-audio
-.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --path . --log-file "$PWD/.tools/sandbox-audit.log" --audio-driver Dummy --script tools/test_sandbox_regressions.gd -- --no-audio
+python tools/run_godot_offscreen.py -- .tools/godot/Godot_v4.5.2-stable_win64_console.exe --path . --log-file "$PWD/.tools/sandbox-render.log" --audio-driver Dummy --script tools/render_sandbox.gd -- --no-audio
+python tools/run_godot_offscreen.py -- .tools/godot/Godot_v4.5.2-stable_win64_console.exe --path . --log-file "$PWD/.tools/sandbox-audit.log" --audio-driver Dummy --script tools/test_sandbox_regressions.gd -- --no-audio
+python tools/run_godot_offscreen.py -- .tools/godot/Godot_v4.5.2-stable_win64_console.exe --path . --log-file "$PWD/.tools/adventure-test.log" --audio-driver Dummy --script tools/test_sandbox_adventure.gd -- --no-audio
+python tools/run_godot_offscreen.py -- .tools/godot/Godot_v4.5.2-stable_win64_console.exe --path . --log-file "$PWD/.tools/adventure-render.log" --audio-driver Dummy --script tools/render_sandbox_adventure.gd -- --no-audio
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file "$PWD/.tools/music-tests.log" --script tools/test_music.gd -- --no-audio
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file "$PWD/.tools/dungeon-tests.log" --fixed-fps 60 --script tools/test_dungeon.gd -- --no-audio
-.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --path . --log-file "$PWD/.tools/dungeon-render.log" --audio-driver Dummy --fixed-fps 60 --script tools/render_dungeon.gd -- --no-audio
+python tools/run_godot_offscreen.py -- .tools/godot/Godot_v4.5.2-stable_win64_console.exe --path . --log-file "$PWD/.tools/dungeon-render.log" --audio-driver Dummy --fixed-fps 60 --script tools/render_dungeon.gd -- --no-audio
 python tools/build_windows.py
 ```
 

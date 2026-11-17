@@ -3,6 +3,8 @@ extends Node2D
 const Data = preload("res://scripts/sandbox_data.gd")
 const View = preload("res://scripts/sandbox_view.gd")
 const Atlas = preload("res://scripts/sprite_atlas.gd")
+const Catalog = preload("res://scripts/sandbox_catalog.gd")
+const Adventure = preload("res://scripts/sandbox_adventure.gd")
 const Audio = preload("res://scripts/audio.gd")
 const REACH: float = 132.0
 var world := Data.new()
@@ -57,6 +59,7 @@ var hero_atlas: RefCounted
 var priest_atlas: RefCounted
 var enemy_atlas: RefCounted
 var audio: Node
+var adventure: RefCounted
 var merchant_present: bool = false
 var merchant_info: Dictionary = {}
 var merchant_visit: int = 0
@@ -86,6 +89,7 @@ func _ready() -> void:
 	hero_atlas = Atlas.new(load("res://assets/generated/dungeon/hero.png"), 4, 4, true)
 	priest_atlas = Atlas.new(load("res://assets/generated/sandbox/friday-priest.png"), 1, 1)
 	enemy_atlas = Atlas.new(load("res://assets/generated/dungeon/enemies.png"), 4, 4)
+	adventure = Adventure.new(self)
 	audio = Audio.new()
 	add_child(audio)
 	setup_input()
@@ -123,7 +127,7 @@ func _ready() -> void:
 		start_world(20261113)
 
 func setup_input() -> void:
-	for binding in [{"id":"sandbox_left", "keys":[KEY_A, KEY_LEFT]}, {"id":"sandbox_right", "keys":[KEY_D, KEY_RIGHT]}, {"id":"sandbox_jump", "keys":[KEY_SPACE, KEY_W, KEY_UP]}]:
+	for binding in [{"id":"sandbox_left", "keys":[KEY_A, KEY_LEFT]}, {"id":"sandbox_right", "keys":[KEY_D, KEY_RIGHT]}, {"id":"sandbox_jump", "keys":[KEY_SPACE, KEY_W, KEY_UP]}, {"id":"sandbox_down", "keys":[KEY_S,KEY_DOWN]}]:
 		if not InputMap.has_action(binding.id):
 			InputMap.add_action(binding.id)
 			for code in binding.keys:
@@ -133,6 +137,8 @@ func setup_input() -> void:
 
 func start_world(chosen_seed: int = 0) -> void:
 	world.generate(chosen_seed if chosen_seed != 0 else rng.randi_range(1, 99999999))
+	adventure.reset()
+	adventure.structures.generate_features()
 	inventory = {"pickaxe":1, "sword":1, "dirt":20, "torch":8, "potion":3, "coin":20}
 	stats = {"mined":0, "wood":0, "placed":0, "kills":0, "crafted":0}
 	pick_tier = 0
@@ -181,6 +187,8 @@ func reset_transients() -> void:
 	autosave_time = 0.0
 	enemy_timer = 10.0
 	last_reveal = Vector2i(-1, -1)
+	if adventure:
+		adventure.reset_transients()
 	review_cards.clear()
 	review_matched.clear()
 	review_open.clear()
@@ -198,7 +206,7 @@ func is_night() -> bool:
 	return day_fraction() < 0.22 or day_fraction() > 0.79
 
 func max_health() -> float:
-	return 120.0 if count_item("charm") > 0 else 100.0
+	return (120.0 if count_item("charm") > 0 else 100.0) + (adventure.life_upgrades * 20 + adventure.fruit_upgrades * 5 if adventure else 0)
 
 func count_item(id: String) -> int:
 	return int(inventory.get(id, 0))
@@ -210,7 +218,12 @@ func held_item() -> String:
 	return hotbar[selected]
 
 func equip_item(id: String) -> void:
-	if not Data.ITEMS.has(id) or (Data.ITEMS[id].block == 0 and id not in ["pickaxe", "sword", "potion"]):
+	if not Data.ITEMS.has(id):
+		return
+	if Data.ITEMS[id].has("armor") or Data.ITEMS[id].has("accessory"):
+		adventure.equip(id)
+		return
+	if not Data.equippable(id):
 		return
 	var existing: int = hotbar.find(id)
 	if existing >= 0:
@@ -228,16 +241,28 @@ func cell_center(c: Vector2i) -> Vector2:
 func mouse_world() -> Vector2:
 	return get_viewport().get_canvas_transform().affine_inverse() * pointer
 
-func body_free(p: Vector2, half_width: float = 8.0, height: float = 36.0) -> bool:
+func body_free(p: Vector2, half_width: float = 8.0, height: float = 36.0, ignore_platforms: bool = false) -> bool:
 	var first: Vector2i = cell_at(p + Vector2(-half_width, -height))
 	var last: Vector2i = cell_at(p + Vector2(half_width - 0.01, -0.01))
 	for y in range(first.y, last.y + 1):
 		for x in range(first.x, last.x + 1):
+			if ignore_platforms and world.tile(Vector2i(x,y)) == Data.Block.PLATFORM:
+				continue
 			if world.solid(Vector2i(x, y)):
 				return false
 	return true
 
-func move_body(p: Vector2, motion: Vector2, half_width: float = 8.0, height: float = 36.0) -> Dictionary:
+func motion_free(next: Vector2, previous: Vector2, axis: int, half_width: float, height: float, drop_platforms: bool) -> bool:
+	if not body_free(next,half_width,height,true):
+		return false
+	if axis == 1 and next.y > previous.y and not drop_platforms:
+		var y: int = floori((next.y - 0.01) / Data.TILE)
+		for x in range(floori((next.x - half_width) / Data.TILE),floori((next.x + half_width - 0.01) / Data.TILE) + 1):
+			if world.tile(Vector2i(x,y)) == Data.Block.PLATFORM and previous.y <= y * Data.TILE + 0.02 and next.y > y * Data.TILE:
+				return false
+	return true
+
+func move_body(p: Vector2, motion: Vector2, half_width: float = 8.0, height: float = 36.0, drop_platforms: bool = false) -> Dictionary:
 	var result: Vector2 = p
 	var hit := Vector2.ZERO
 	for axis in range(2):
@@ -246,7 +271,7 @@ func move_body(p: Vector2, motion: Vector2, half_width: float = 8.0, height: flo
 		for n in range(steps):
 			var next: Vector2 = result
 			next[axis] += distance / steps
-			if body_free(next, half_width, height):
+			if motion_free(next,result,axis,half_width,height,drop_platforms):
 				result = next
 			else:
 				# Binary refinement keeps feet flush with terrain at every framerate.
@@ -254,7 +279,7 @@ func move_body(p: Vector2, motion: Vector2, half_width: float = 8.0, height: flo
 				var far: Vector2 = next
 				for refinement in range(8):
 					var middle: Vector2 = (near + far) * 0.5
-					if body_free(middle, half_width, height):
+					if motion_free(middle,result,axis,half_width,height,drop_platforms):
 						near = middle
 					else:
 						far = middle
@@ -269,7 +294,7 @@ func line_clear(target: Vector2i) -> bool:
 	var steps: int = maxi(1, ceili(origin.distance_to(end) / 6.0))
 	for n in range(steps):
 		var c: Vector2i = cell_at(origin.lerp(end, float(n) / steps))
-		if c != target and world.solid(c):
+		if c != target and world.solid(c) and world.tile(c) != Data.Block.PLATFORM:
 			return false
 	return true
 
@@ -278,16 +303,20 @@ func reachable(c: Vector2i) -> bool:
 
 func can_mine(c: Vector2i) -> bool:
 	var id: int = world.tile(c)
-	return id != Data.Block.AIR and Data.BLOCKS[id].tier <= pick_tier and reachable(c)
+	return id != Data.Block.AIR and Data.BLOCKS[id].tier <= pick_tier and reachable(c) and adventure.structures.can_mine(c)
 
 func mine(c: Vector2i) -> bool:
 	if state != "playing" or not can_mine(c):
 		return false
 	var id: int = world.tile(c)
+	if adventure.structures.mine_special(c):
+		ui.map_dirty = true
+		return true
 	var item: String = Data.BLOCKS[id].item
 	if id == Data.Block.LEAF:
 		item = ""
 	world.set_tile(c, Data.Block.AIR)
+	adventure.structures.wake_fluid(c)
 	if not item.is_empty():
 		add_item(item, 1)
 		float_text("+1 " + Data.ITEMS[item].name, cell_center(c), Color(Data.BLOCKS[id].color))
@@ -314,7 +343,7 @@ func mine(c: Vector2i) -> bool:
 	return true
 
 func can_place(c: Vector2i, item: String) -> bool:
-	if not Data.ITEMS.has(item) or count_item(item) <= 0 or not reachable(c) or world.tile(c) != Data.Block.AIR:
+	if not Data.ITEMS.has(item) or count_item(item) <= 0 or not reachable(c) or world.tile(c) not in [Data.Block.AIR,Data.Block.HERB,Data.Block.MUSHROOM,Data.Block.SAPLING]:
 		return false
 	var id: int = Data.ITEMS[item].block
 	if id == Data.Block.AIR:
@@ -328,6 +357,9 @@ func can_place(c: Vector2i, item: String) -> bool:
 		for enemy in enemies:
 			if placed.intersects(Rect2(enemy.p - Vector2(12, 24), Vector2(24, 24))):
 				return false
+		for npc in adventure.structures.npcs:
+			if placed.intersects(Rect2(npc.p - Vector2(9, 42), Vector2(18, 42))):
+				return false
 	for offset in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
 		if world.tile(c + offset) != Data.Block.AIR:
 			return true
@@ -336,10 +368,20 @@ func can_place(c: Vector2i, item: String) -> bool:
 func place(c: Vector2i, item: String = "") -> bool:
 	if item.is_empty():
 		item = held_item()
+	if state == "playing" and item in ["wall","door","bucket","water_bucket","lava_bucket","seed","acorn"]:
+		return adventure.structures.place_special(c,item)
 	if state != "playing" or not can_place(c, item):
 		return false
 	var id: int = Data.ITEMS[item].block
+	var previous: int = world.tile(c)
+	if Data.BLOCKS[id].solid and not adventure.structures.displace([c]):
+		return false
+	if previous in [Data.Block.HERB,Data.Block.MUSHROOM,Data.Block.SAPLING]:
+		adventure.structures.harvest_plant(c)
 	world.set_tile(c, id)
+	adventure.structures.active[c] = true
+	if id == Data.Block.CHAIR and not adventure.structures.house_anchors.has(c):
+		adventure.structures.house_anchors.append(c)
 	add_item(item, -1)
 	stats.placed = int(stats.get("placed", 0)) + 1
 	burst(cell_center(c), Color(Data.BLOCKS[id].color), 4)
@@ -365,12 +407,14 @@ func craft_reason(index: int) -> String:
 	if index < 0 or index >= Data.RECIPES.size():
 		return "无效配方"
 	var recipe: Dictionary = Data.RECIPES[index]
+	if recipe.get("stage",0) > adventure.stage():
+		return "需要推进 Boss 成长"
 	if recipe.has("tier"):
 		var tier: int = pick_tier if recipe.id.ends_with("pick") else sword_tier
 		if tier >= recipe.tier:
 			return "已拥有此等级装备"
 		if tier < recipe.tier - 1:
-			return "先制作铜装备"
+			return "先制作上一级装备"
 	if not near_station(recipe.station):
 		return "需要靠近" + Data.BLOCKS[recipe.station].name
 	for id in recipe.cost:
@@ -399,10 +443,18 @@ func craft(index: int) -> bool:
 	return true
 
 func heal() -> bool:
-	if state != "playing" or count_item("potion") <= 0 or health >= max_health():
+	if state != "playing" or health >= max_health():
+		return false
+	if adventure.heal_cooldown > 0:
+		notify("治疗药水冷却中：%d 秒" % ceili(adventure.heal_cooldown))
+		return false
+	if count_item("greater_potion") > 0:
+		return adventure.use_item("greater_potion")
+	if count_item("potion") <= 0:
 		return false
 	add_item("potion", -1)
 	health = minf(max_health(), health + 45)
+	adventure.heal_cooldown = 45
 	float_text("+45 生命", player - Vector2(0, 45), Color("93e6ba"))
 	audio.sfx("coffee")
 	return true
@@ -410,29 +462,22 @@ func heal() -> bool:
 func attack() -> void:
 	if state != "playing" or sword_cooldown > 0:
 		return
-	sword_cooldown = 0.36
+	var spec: Dictionary = Catalog.WEAPONS.get(held_item(),{})
+	if spec.get("type","") != "melee":
+		spec = {"damage":[14,24,36][sword_tier],"reach":94,"cooldown":0.36}
+	sword_cooldown = spec.cooldown
 	sword_time = 0.24
 	audio.sfx("slash")
 	var origin: Vector2 = player - Vector2(0, 18)
 	for enemy in enemies.duplicate():
 		var diff: Vector2 = enemy.p - Vector2(0, 12) - origin
-		if diff.length() < 94 and diff.x * facing > -18 and line_clear(cell_at(enemy.p - Vector2(0, 12))):
-			enemy.hp -= [14, 24, 36][sword_tier]
-			enemy.v = Vector2(facing * 220, -200)
-			enemy.flash = 0.18
-			burst(enemy.p - Vector2(0, 14), Color("a5e3bb"), 6)
-			float_text(str([14, 24, 36][sword_tier]), enemy.p - Vector2(0, 35), Color("f2e3b6"))
-			if enemy.hp <= 0:
-				enemies.erase(enemy)
-				add_item("gel", 2)
-				var coins: int = rng.randi_range(3, 7)
-				add_item("coin", coins)
-				stats.kills = int(stats.get("kills", 0)) + 1
-				float_text("凝胶 +2 · 旧银币 +%d" % coins, enemy.p - Vector2(0, 45), Color("e6cc92"))
+		if diff.length() < spec.reach and diff.x * facing > -18 and line_clear(cell_at(enemy.p - Vector2(0, 12))):
+			adventure.damage_enemy(enemy,spec.damage,player)
 
 func hurt(amount: float, source: Vector2) -> void:
 	if state != "playing" or hurt_time > 0:
 		return
+	amount = maxf(1,amount - adventure.defense() * 0.5)
 	health = maxf(0, health - amount)
 	hurt_time = 1.0
 	heal_delay = 9.0
@@ -459,6 +504,19 @@ func nearby_surface(anchor: Vector2, radius: int = 32) -> Vector2:
 	return best
 
 func safe_spawn() -> Vector2:
+	# A valid bed can be far underground; retain its exact standing position.
+	if world.valid(cell_at(world.spawn)) and body_free(world.spawn) and world.solid(cell_at(world.spawn + Vector2(0,0.02))):
+		return world.spawn
+	var home_cell: Vector2i = cell_at(world.spawn)
+	if home_cell.y > world.surface_at(home_cell.x) + 16:
+		var local := Vector2.INF
+		for y in range(maxi(3,home_cell.y - 6),mini(Data.HEIGHT - 2,home_cell.y + 7)):
+			for x in range(maxi(1,home_cell.x - 8),mini(Data.WIDTH - 1,home_cell.x + 9)):
+				var feet := Vector2((x + 0.5) * Data.TILE,y * Data.TILE - 0.01)
+				if world.solid(Vector2i(x,y)) and body_free(feet) and (not local.is_finite() or feet.distance_squared_to(world.spawn) < local.distance_squared_to(world.spawn)):
+					local = feet
+		if local.is_finite():
+			return local
 	var safe: Vector2 = nearby_surface(world.spawn)
 	if safe.is_finite():
 		return safe
@@ -468,16 +526,9 @@ func safe_spawn() -> Vector2:
 	for dx in range(-1, 2):
 		for dy in range(-3, 0):
 			var c: Vector2i = at + Vector2i(dx, dy)
-			var id: int = world.tile(c)
-			if id != Data.Block.AIR:
-				var item: String = Data.BLOCKS[id].item
-				if not item.is_empty() and id != Data.Block.LEAF:
-					add_item(item, 1)
-				world.set_tile(c, Data.Block.AIR)
+			adventure.structures.salvage(c)
 	if not world.solid(at):
-		var old: int = world.tile(at)
-		if old != Data.Block.AIR and not Data.BLOCKS[old].item.is_empty():
-			add_item(Data.BLOCKS[old].item, 1)
+		adventure.structures.salvage(at)
 		world.set_tile(at, Data.Block.DIRT)
 	ui.map_dirty = true
 	return Vector2((at.x + 0.5) * Data.TILE, at.y * Data.TILE - 0.01)
@@ -525,6 +576,8 @@ func interact() -> void:
 	if can_trade():
 		set_state("merchant")
 		audio.sfx("select")
+	elif adventure.structures.interact():
+		return
 	else:
 		set_state("inventory")
 
@@ -644,40 +697,10 @@ func claim_review_reward(index: int) -> bool:
 	return true
 
 func spawn_enemy() -> void:
-	if enemies.size() >= 10:
-		return
-	var direction: int = -1 if rng.randf() < 0.5 else 1
-	var x: int = clampi(cell_at(player).x + direction * rng.randi_range(19, 27), 2, Data.WIDTH - 3)
-	var underground: bool = cell_at(player).y > world.surface_at(x) + 12
-	var search_y: int = cell_at(player).y - 10 if underground else world.surface_at(x) - 8
-	for y in range(maxi(4, search_y), mini(Data.HEIGHT - 3, search_y + 30)):
-		var p := Vector2((x + 0.5) * Data.TILE, y * Data.TILE - 0.01)
-		if body_free(p, 12, 24) and world.solid(Vector2i(x, y)):
-			var dark: bool = is_night() or underground
-			enemies.append({"p":p, "previous":p, "v":Vector2.ZERO, "hp":60 if dark else 35, "max_hp":60 if dark else 35, "jump":rng.randf_range(0.1, 0.7), "flash":0.0, "dark":dark})
-			return
+	adventure.natural_spawn()
 
 func update_enemies(delta: float) -> void:
-	for enemy in enemies.duplicate():
-		enemy.previous = enemy.p
-		if enemy.p.distance_to(player) > 1500:
-			enemies.erase(enemy)
-			continue
-		enemy.flash = maxf(0, enemy.flash - delta)
-		enemy.jump -= delta
-		var on_floor: bool = not body_free(enemy.p + Vector2(0, 1.0), 12, 24)
-		if on_floor and enemy.jump <= 0:
-			enemy.v = Vector2(signf(player.x - enemy.p.x) * (115 if enemy.dark else 85), -350)
-			enemy.jump = rng.randf_range(0.7, 1.2)
-		enemy.v.y = minf(800, enemy.v.y + 1050 * delta)
-		var result: Dictionary = move_body(enemy.p, enemy.v * delta, 12, 24)
-		enemy.p = result.p
-		if result.hit.x != 0:
-			enemy.v.x = 0
-		if result.hit.y != 0:
-			enemy.v.y = 0
-		if absf(enemy.p.x - player.x) < 25 and absf(enemy.p.y - player.y) < 35:
-			hurt(16 if enemy.dark else 10, enemy.p)
+	adventure.update_enemies(delta)
 
 func _process(delta: float) -> void:
 	visual_clock += delta
@@ -702,8 +725,13 @@ func _physics_process(delta: float) -> void:
 	place_cooldown = maxf(0, place_cooldown - delta)
 	jump_buffer = maxf(0, jump_buffer - delta)
 	coyote = 0.12 if grounded else maxf(0, coyote - delta)
+	if grounded:
+		adventure.air_jumps = 0
+		adventure.flight = 2.2
 	var horizontal: float = Input.get_axis("sandbox_left", "sandbox_right")
 	var speed: float = 200.0
+	if adventure.has_accessory("boots"):
+		speed = 285
 	velocity.x = move_toward(velocity.x, horizontal * speed, (1900.0 if grounded else 1000.0) * delta)
 	if horizontal != 0:
 		facing = signf(horizontal)
@@ -718,8 +746,9 @@ func _physics_process(delta: float) -> void:
 	if not Input.is_action_pressed("sandbox_jump") and velocity.y < -200:
 		velocity.y = move_toward(velocity.y, -200.0, 1900.0 * delta)
 	velocity.y = minf(900, velocity.y + 1350 * delta)
+	adventure.adjust_motion(delta)
 	var falling_speed: float = velocity.y
-	var motion: Dictionary = move_body(player, velocity * delta)
+	var motion: Dictionary = move_body(player, velocity * delta, 8, 36, Input.is_action_pressed("sandbox_down"))
 	player = motion.p
 	grounded = motion.hit.y > 0
 	if motion.hit.x != 0:
@@ -729,15 +758,17 @@ func _physics_process(delta: float) -> void:
 	if grounded and falling_speed > 700:
 		hurt((falling_speed - 660) * 0.12, player + Vector2(0, 10))
 	if heal_delay <= 0:
-		health = minf(max_health(), health + delta * (2.0 if near_station(Data.Block.BENCH) else 0.35))
+		health = minf(max_health(), health + delta * (3.0 if near_station(Data.Block.CAMPFIRE) else (2.0 if near_station(Data.Block.BENCH) else 0.35)))
 	update_tools(delta)
 	if state != "playing":
 		return
 	enemy_timer -= delta
 	if enemy_timer <= 0:
-		enemy_timer = 6.0 if is_night() else 12.0
+		enemy_timer = 3.5 if adventure.blood_moon else (6.0 if is_night() else 12.0)
 		spawn_enemy()
 	update_enemies(delta)
+	if state == "playing":
+		adventure.tick(delta)
 	for particle in particles.duplicate():
 		particle.life -= delta
 		particle.p += particle.v * delta
@@ -765,14 +796,28 @@ func _physics_process(delta: float) -> void:
 func update_tools(delta: float) -> void:
 	var target: Vector2i = cell_at(mouse_world())
 	if left_held and not ui.blocks_world(pointer):
-		if held_item() == "sword":
+		if Data.ITEMS[held_item()].has("weapon"):
+			adventure.fire_weapon(held_item())
+		elif held_item() == "fishing_rod":
+			if sword_cooldown <= 0:
+				adventure.use_item(held_item())
+				sword_cooldown = 0.25
+			left_held = false
+		elif held_item() == "sword":
 			attack()
+		elif held_item() == "hammer":
+			adventure.structures.take_wall(target)
+		elif held_item() == "potion":
+			heal()
+		elif held_item() != "pickaxe" and sword_cooldown <= 0:
+			if adventure.use_item(held_item()):
+				sword_cooldown = 0.25
 		elif held_item() == "pickaxe" and can_mine(target):
 			if mining_cell != target:
 				mining_cell = target
 				mining_progress = 0.0
 			var hardness: float = Data.BLOCKS[world.tile(target)].hardness
-			mining_progress += delta * [1.0, 1.65, 2.4][pick_tier] / maxf(0.05, hardness)
+			mining_progress += delta * [1.0,1.65,2.4,3.2,4.2,5.4][pick_tier] / maxf(0.05, hardness)
 			if mining_progress >= 1.0:
 				mine(target)
 		else:
@@ -802,6 +847,8 @@ func set_state(value: String) -> void:
 	previous_player = player
 
 func objective() -> Dictionary:
+	if adventure:
+		return adventure.objective()
 	if completed:
 		return {"title":"这里，就是新家", "text":"继续建造、探索；每 5 个游戏日找神父交易。"}
 	if int(stats.get("wood", 0)) < 8 and count_item("bench") == 0 and not near_station(Data.Block.BENCH):
@@ -816,6 +863,7 @@ func save_world() -> bool:
 	if inventory.is_empty():
 		return false
 	var data: Dictionary = {"version":1, "seed":world.seed_value, "tiles":world.tiles, "explored":world.explored, "surface":world.surface, "spawn":world.spawn, "heart":world.heart_cell, "inventory":inventory, "hotbar":hotbar, "pick":pick_tier, "sword":sword_tier, "elapsed":elapsed, "player":player, "health":health, "selected":selected, "stats":stats, "completed":completed, "merchant_visit":merchant_visit, "merchant_stock":merchant_stock, "review_completed_visit":review_completed_visit, "review_reward_pending":review_reward_pending}
+	data["adventure"] = adventure.save_data()
 	var file := FileAccess.open(save_path + ".tmp", FileAccess.WRITE)
 	if file == null:
 		return failed_save("无法写入存档")
@@ -846,7 +894,7 @@ func read_save(path: String) -> Dictionary:
 	if not FileAccess.file_exists(path):
 		return {}
 	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null or file.get_length() > 4000000:
+	if file == null or file.get_length() > 16000000:
 		return {}
 	var value: Variant = file.get_var(false)
 	file.close()
@@ -873,12 +921,12 @@ func read_save(path: String) -> Dictionary:
 	if not saved_bar is Array or saved_bar.size() != Data.HOTBAR.size():
 		return {}
 	for item in saved_bar:
-		if not item is String or not Data.ITEMS.has(item) or (Data.ITEMS[item].block == 0 and item not in ["pickaxe", "sword", "potion"]):
+		if not item is String or not Data.equippable(item):
 			return {}
 	for key in ["pick", "sword", "seed", "selected"]:
 		if not value.get(key) is int:
 			return {}
-	if value.pick < 0 or value.pick > 2 or value.sword < 0 or value.sword > 2:
+	if value.pick < 0 or value.pick > 5 or value.sword < 0 or value.sword > 2:
 		return {}
 	for key in ["health", "elapsed"]:
 		if typeof(value.get(key)) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(value[key])) or value[key] < 0:
@@ -907,6 +955,8 @@ func read_save(path: String) -> Dictionary:
 		var stock: Variant = value.merchant_stock[index]
 		if not stock is int or stock < 0 or stock > Data.OFFERS[index].stock:
 			return {}
+	if value.has("adventure") and not adventure.valid_save(value.adventure):
+		return {}
 	return value
 
 func load_world() -> bool:
@@ -928,9 +978,14 @@ func load_world() -> bool:
 	world.torch_cells.clear()
 	for y in range(Data.HEIGHT):
 		for x in range(Data.WIDTH):
-			if world.tile(Vector2i(x, y)) in [Data.Block.TORCH, Data.Block.BEACON]:
+			if world.tile(Vector2i(x, y)) in [Data.Block.TORCH, Data.Block.BEACON, Data.Block.CAMPFIRE, Data.Block.ALTAR, Data.Block.LIFE_CRYSTAL]:
 				world.torch_cells[Vector2i(x, y)] = true
 	inventory = data.inventory
+	if data.has("adventure"):
+		adventure.load_data(data.adventure)
+	else:
+		adventure.reset()
+		adventure.structures.generate_features(true)
 	pick_tier = data.pick
 	sword_tier = data.sword
 	elapsed = data.elapsed
@@ -1004,12 +1059,19 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif code == KEY_ESCAPE:
 		match state:
 			"playing": set_state("paused")
-			"paused", "inventory", "merchant", "map", "guide", "complete", "recall": set_state("playing")
+			"paused", "inventory", "merchant", "map", "guide", "complete", "recall", "chest", "town_npc", "journal", "sandbox_victory": set_state("playing")
 			"confirm": set_state("menu")
 			"review", "review_failed", "review_reward": set_state("merchant")
 			"menu": leave_mode()
 	elif state == "playing":
-		if code in [KEY_TAB, KEY_I]:
+		if code == KEY_Q:
+			adventure.hook_action()
+		elif code == KEY_T:
+			set_state("journal")
+		elif code == KEY_F7:
+			var house: Dictionary = adventure.structures.register_house(cell_at(player - Vector2(0,12)))
+			notify(house.reason)
+		elif code in [KEY_TAB, KEY_I]:
 			set_state("inventory")
 		elif code == KEY_E:
 			interact()
@@ -1030,9 +1092,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif state == "inventory":
 		if code in [KEY_TAB, KEY_I, KEY_E]:
 			set_state("playing")
-		elif code >= KEY_1 and code <= KEY_3:
+		elif code >= KEY_1 and code <= KEY_4:
 			recipe_category = code - KEY_1
+			adventure.recipe_page = 0
 	elif state in ["merchant", "map", "guide"] and code in [KEY_E, KEY_M, KEY_F1]:
+		set_state("playing")
+	elif state in ["chest","town_npc","journal"] and code in [KEY_E,KEY_T,KEY_TAB]:
 		set_state("playing")
 	elif state == "dead" and code in [KEY_ENTER, KEY_R]:
 		respawn()

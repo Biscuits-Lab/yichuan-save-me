@@ -1,6 +1,8 @@
 extends Node2D
 ## Visible chunks use cached pixel textures; sky and interface use screen canvases.
 const Data = preload("res://scripts/sandbox_data.gd")
+const Catalog = preload("res://scripts/sandbox_catalog.gd")
+const AdventureView = preload("res://scripts/sandbox_adventure_view.gd")
 const INK := Color("152a32")
 const PANEL := Color("1d343d")
 const EDGE := Color("3e5960")
@@ -21,10 +23,12 @@ var map_dirty: bool = true
 var map_time: float = -10.0
 var visible_world := Rect2()
 var styles: Dictionary = {}
+var detail
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	if surface in ["world", "ui"]:
+		detail = AdventureView.new(self)
 		make_tiles()
 
 func clear_cache() -> void:
@@ -55,7 +59,10 @@ func box(rect: Rect2, color: Color = PANEL, border: Color = EDGE, radius: int = 
 func button(rect: Rect2, label: String, action: String, index: int = 0, primary: bool = false, enabled: bool = true) -> void:
 	var hover: bool = rect.has_point(game.pointer) and enabled
 	box(rect, (MINT.lightened(0.08) if hover else MINT) if primary and enabled else (Color("304a50") if hover else PANEL), MINT if primary or hover else EDGE)
-	centered(label, rect.get_center() + Vector2(0, 6), 16, INK if primary and enabled else (WHITE if enabled else MUTED), primary)
+	var size: int = 16
+	while size > 11 and game.font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > rect.size.x - 14:
+		size -= 1
+	centered(label, rect.get_center() + Vector2(0, size * 0.36), size, INK if primary and enabled else (WHITE if enabled else MUTED), primary)
 	if enabled:
 		buttons.append({"rect":rect, "action":action, "index":index, "state":game.state})
 
@@ -127,6 +134,8 @@ func make_tiles() -> void:
 			image.fill_rect(Rect2i(8, 9, 8, 13), Color("667c89"))
 			image.fill_rect(Rect2i(7, 4, 10, 10), MINT)
 			image.fill_rect(Rect2i(10, 1, 4, 16), Color("e0f8d4"))
+		if id >= Data.Block.PLATFORM:
+			AdventureView.paint_tile(image, id)
 		tile_image.blit_rect(image, Rect2i(0, 0, t, t), Vector2i(id * t, 0))
 	tile_texture = ImageTexture.create_from_image(tile_image)
 	make_icons()
@@ -176,7 +185,10 @@ func icon(id: String, p: Vector2, size: float = 28.0, tint: Color = Color.WHITE)
 		return
 	var block: int = Data.ITEMS[id].block
 	var rect := Rect2(p - Vector2.ONE * size / 2, Vector2.ONE * size)
-	if block != 0:
+	if game.adventure.icons.has(id):
+		var item_tint: Color = tint * Color(Data.ITEMS[id].color) if Data.ITEMS[id].has("armor") else tint
+		game.adventure.icons[id].draw(self, 0, p + Vector2(0, size / 2), size, 1, item_tint)
+	elif block != 0:
 		draw_texture_rect_region(tile_texture, rect, Rect2(block * Data.TILE, 0, Data.TILE, Data.TILE), tint)
 	else:
 		draw_texture_rect(icon_textures[id], rect, false, tint)
@@ -265,24 +277,22 @@ func draw_world() -> void:
 			if y > game.world.surface_at(x) + 1:
 				draw_rect(Rect2(x * Data.TILE + 10, y * Data.TILE + 6, 12, 3), Color("3d444e"))
 	var chunk_size: int = Data.CHUNK * Data.TILE
+	detail.background()
 	var from: Vector2i = Vector2i((visible_world.position / chunk_size).floor())
 	var to: Vector2i = Vector2i((visible_world.end / chunk_size).floor())
 	for y in range(maxi(0, from.y), mini(Data.HEIGHT / Data.CHUNK - 1, to.y) + 1):
 		for x in range(maxi(0, from.x), mini(Data.WIDTH / Data.CHUNK - 1, to.x) + 1):
 			var c := Vector2i(x, y)
 			draw_texture(chunk_texture(c), Vector2(c) * chunk_size)
+	detail.liquids()
 	if game.merchant_present and visible_world.grow(100).has_point(game.merchant_position):
 		game.priest_atlas.draw(self, 0, game.merchant_position, 64, 1)
 		world_label("神父 · CTO", game.merchant_position - Vector2(0, 83), GOLD)
 		if game.can_trade() and game.state == "playing":
 			world_label("[E] 购买物资", game.merchant_position - Vector2(0, 65), WHITE)
 	for enemy in game.enemies:
-		var p: Vector2 = render_position(enemy.p, enemy.previous)
-		var tint: Color = Color("b9a4dd") if enemy.dark else Color("a7d1a7")
-		game.enemy_atlas.draw(self, (int(game.visual_clock * 5) % 4), p, 29, 1, Color("ffffff") if enemy.flash > 0 else tint)
-		if enemy.hp < enemy.max_hp:
-			draw_rect(Rect2(p - Vector2(17, 39), Vector2(34, 3)), INK)
-			draw_rect(Rect2(p - Vector2(17, 39), Vector2(34 * enemy.hp / enemy.max_hp, 3)), CORAL)
+		detail.enemy(enemy)
+	detail.actors()
 	var p: Vector2 = render_position(game.player, game.previous_player)
 	var pose: int = int(game.visual_clock * 9) % 4 if absf(game.velocity.x) > 5 else 0
 	var tint: Color = Color(1, 1, 1, 0.5) if game.hurt_time > 0 and int(game.visual_clock * 15) % 2 == 0 else Color.WHITE
@@ -290,12 +300,15 @@ func draw_world() -> void:
 	if game.sword_time > 0:
 		var progress: float = 1 - game.sword_time / 0.24
 		draw_set_transform(p - Vector2(0, 23), (progress * 2.5 - 1.25) * game.facing)
-		icon("sword", Vector2(game.facing * 28, -12), 46)
+		var weapon: String = game.held_item() if Catalog.WEAPONS.get(game.held_item(),{}).get("type","") == "melee" else "sword"
+		icon(weapon, Vector2(game.facing * 28, -12), 46)
 		draw_set_transform(Vector2.ZERO)
 	elif game.mining_progress > 0:
 		draw_set_transform(p - Vector2(0, 22), sin(game.visual_clock * 20) * 0.65 * game.facing)
 		icon("pickaxe", Vector2(game.facing * 21, -6), 32)
 		draw_set_transform(Vector2.ZERO)
+	elif Data.ITEMS[game.held_item()].has("weapon"):
+		icon(game.held_item(), p + Vector2(game.facing * 18,-24), 28)
 	for particle in game.particles:
 		draw_rect(Rect2(particle.p, Vector2.ONE * 3), particle.color)
 	draw_lighting()
@@ -311,6 +324,9 @@ func world_label(value: String, p: Vector2, color: Color) -> void:
 
 func draw_lighting() -> void:
 	var lights: Array[Vector2] = []
+	var boss: Dictionary = game.adventure.current_boss()
+	if not boss.is_empty():
+		lights.append(boss.p - Vector2(0, boss.spec.height * 0.5))
 	for c in game.world.torch_cells:
 		var p: Vector2 = game.cell_center(c)
 		if visible_world.grow(180).has_point(p):
@@ -352,7 +368,7 @@ func draw_target() -> void:
 	if id != Data.Block.AIR:
 		var label: String = Data.BLOCKS[id].name
 		if Data.BLOCKS[id].tier > game.pick_tier:
-			label += " · 需要" + ("铜镐" if Data.BLOCKS[id].tier == 1 else "铁镐")
+			label += " · 需要" + Catalog.PICK_NAMES[Data.BLOCKS[id].tier]
 		world_label(label, rect.get_center() + Vector2(0, 38), WHITE)
 
 func update_map() -> void:
@@ -391,7 +407,7 @@ func draw_map(rect: Rect2, full: bool = false) -> void:
 			draw_rect(Rect2(merchant - Vector2(2, 7), Vector2(4, 7)), Color("f1bd7a"))
 
 func blocks_world(p: Vector2) -> bool:
-	return game.state != "playing" or p.y > 606 or Rect2(970, 12, 296, 192).has_point(p) or Rect2(14, 12, 324, 283).has_point(p)
+	return game.state != "playing" or p.y > 606 or Rect2(970, 12, 296, 192).has_point(p) or Rect2(14, 12, 324, 397).has_point(p)
 
 func draw_ui() -> void:
 	buttons.clear()
@@ -407,6 +423,10 @@ func draw_ui() -> void:
 		buttons.clear()
 		match game.state:
 			"inventory": inventory_panel()
+			"chest": detail.chest_panel()
+			"town_npc": detail.npc_panel()
+			"journal": detail.journal()
+			"sandbox_victory": modal("公主，终于救回来了", "终焉策划已被击败。世界和成长记录保留，旷野仍可继续建设。", "继续探索世界", "resume")
 			"merchant": merchant_panel()
 			"review": review_panel()
 			"review_reward": merchant_panel(true)
@@ -438,8 +458,8 @@ func menu() -> void:
 	text("毅川的", Vector2(88, 172), 42, WHITE, true)
 	text("像素旷野", Vector2(86, 244), 66, WHITE, true)
 	text("挖下第一块土，建起自己的世界。", Vector2(92, 288), 20, MINT)
-	text("随机地形 / 地下矿脉 / 自由建造", Vector2(94, 338), 17, MUTED)
-	text("制作升级 / 昼夜生存 / 独立存档", Vector2(94, 371), 17, MUTED)
+	text("采矿建家 / NPC 入住 / 远程与魔法", Vector2(94, 338), 17, MUTED)
+	text("8 场 Boss / 困难世界 / 完整成长旅程", Vector2(94, 371), 17, MUTED)
 	if game.save_available:
 		button(Rect2(92, 414, 455, 54), "继续我的世界  →", "continue", 0, true)
 		button(Rect2(92, 481, 455, 47), "开辟新世界", "new")
@@ -476,15 +496,21 @@ func hud() -> void:
 	text("神父到访 · 出生地附近 [E]" if game.merchant_present else "CTO 神父 · 每 5 个游戏日到访", Vector2(31, 264), 14, GOLD if game.merchant_present else MUTED, true)
 	text("本次库存已记录 · 击败怪物获得旧银币" if game.merchant_present else "第 %d 天到访 · 还需 %d 个游戏日" % [game.merchant_info.next_day, game.merchant_info.days], Vector2(31, 284), 11, MUTED)
 	box(Rect2(982, 14, 282, 141), Color(0.07, 0.13, 0.16, 0.93), EDGE, 9)
-	text(game.world.biome(game.cell_at(game.player).x), Vector2(997, 38), 15, WHITE, true)
+	text(game.adventure.biome_name(), Vector2(997, 38), 15, WHITE, true)
 	text("深度 %d m" % maxi(0, int((game.player.y / Data.TILE - game.world.surface_at(game.cell_at(game.player).x)) * 2)), Vector2(1170, 38), 12, MUTED)
 	draw_map(Rect2(997, 50, 252, 81))
 	text("白点：你   金色：出生地   [M] 地图", Vector2(997, 147), 11, MUTED)
 	button(Rect2(1001, 167, 119, 32), "背包 · Tab", "inventory")
 	button(Rect2(1128, 167, 120, 32), "暂停 · Esc", "pause")
 	var item: String = game.held_item()
-	var name: String = ["采掘镐", "铜镐", "铁镐"][game.pick_tier] if item == "pickaxe" else (["猎虫剑", "铜剑", "铁剑"][game.sword_tier] if item == "sword" else Data.ITEMS[item].name)
+	var name: String = Catalog.PICK_NAMES[game.pick_tier] if item == "pickaxe" else (["猎虫剑", "铜剑", "铁剑"][game.sword_tier] if item == "sword" else Data.ITEMS[item].name)
 	var help: String = "长按左键开采" if item == "pickaxe" else ("左键挥剑" if item == "sword" else ("H 快捷治疗" if item == "potion" else "右键放置"))
+	if Data.ITEMS[item].has("weapon"):
+		help = "左键攻击 / 鼠标瞄准"
+	elif Data.ITEMS[item].has("use") or Data.ITEMS[item].has("summon"):
+		help = "左键使用"
+	elif item == "hammer":
+		help = "左键回收背景墙"
 	centered(name + "  ·  " + help, Vector2(640, 612), 16, WHITE, true)
 	for i in range(game.hotbar.size()):
 		var rect := Rect2(330 + i * 62, 627, 56, 57)
@@ -496,52 +522,16 @@ func hud() -> void:
 		if id not in ["pickaxe", "sword"]:
 			text(str(game.count_item(id)), rect.position + Vector2(32, 50), 12, WHITE)
 		buttons.append({"rect":rect, "action":"slot", "index":i, "state":game.state})
-	text("A / D 移动   空格跳跃   J 挥剑   E 交互   H 治疗   R 回家   F1 指南", Vector2(22, 708), 13, Color("c4d4cc"))
+	text("A / D 移动   空格跳跃   S 下穿   Q 钩爪   E 交互   H 治疗   R 回家   F1 指南", Vector2(22, 708), 12, Color("c4d4cc"))
 	var saved: String = "已保存 " + game.last_saved if not game.last_saved.is_empty() else ("存档已读取" if game.save_available else "尚未保存")
 	text("旧银币 %d  ·  %s" % [game.count_item("coin"), "保存失败 · F5 重试" if not game.save_error.is_empty() else saved], Vector2(1000, 706), 12, CORAL if not game.save_error.is_empty() else MUTED)
+	detail.hud()
 
 func scrim() -> void:
 	draw_rect(Rect2(0, 0, 1280, 720), Color(0.035, 0.065, 0.08, 0.87))
 
 func inventory_panel() -> void:
-	scrim()
-	box(Rect2(100, 48, 1080, 614), INK, EDGE, 14)
-	text("随身行囊", Vector2(130, 91), 27, WHITE, true)
-	text("制作台", Vector2(607, 91), 27, WHITE, true)
-	button(Rect2(1087, 65, 66, 31), "关闭", "resume")
-	text("镐：%s    剑：%s" % [["基础", "铜", "铁"][game.pick_tier], ["基础", "铜", "铁"][game.sword_tier]], Vector2(132, 127), 15, MINT)
-	var index: int = 0
-	for id in Data.ITEMS:
-		var rect := Rect2(130 + index % 5 * 86, 147 + index / 5 * 87, 78, 78)
-		box(rect, PANEL, EDGE, 5)
-		icon(id, rect.position + Vector2(39, 27), 30, Color.WHITE if game.count_item(id) > 0 else Color(1, 1, 1, 0.3))
-		centered(Data.ITEMS[id].name, rect.position + Vector2(39, 58), 11, WHITE if game.count_item(id) > 0 else MUTED)
-		centered(str(game.count_item(id)), rect.position + Vector2(39, 73), 11, GOLD)
-		if Data.ITEMS[id].block != 0 or id in ["pickaxe", "sword", "potion"]:
-			buttons.append({"rect":rect, "action":"equip", "item":id, "state":game.state})
-		index += 1
-	for category in range(3):
-		button(Rect2(606 + category * 178, 111, 164, 34), ["1 基础建造", "2 采掘冶炼", "3 战斗 / 归途"][category], "category", category, game.recipe_category == category)
-	var row: int = 0
-	for n in range(Data.RECIPES.size()):
-		var recipe: Dictionary = Data.RECIPES[n]
-		if recipe.category != game.recipe_category:
-			continue
-		var y: float = 159 + row * 73
-		var reason: String = game.craft_reason(n)
-		box(Rect2(604, y, 548, 65), PANEL, EDGE, 5)
-		var item: String = "pickaxe" if recipe.id.ends_with("pick") else ("sword" if recipe.id.ends_with("sword") else recipe.id)
-		icon(item, Vector2(630, y + 26), 27)
-		var name: String = recipe.get("name", Data.ITEMS.get(recipe.id, {}).get("name", recipe.id))
-		text(name + (" ×%d" % recipe.amount if recipe.amount > 1 else ""), Vector2(653, y + 22), 16, WHITE, true)
-		var cost: String = ""
-		for id in recipe.cost:
-			cost += "%s %d/%d  " % [Data.ITEMS[id].name, game.count_item(id), recipe.cost[id]]
-		text(cost, Vector2(615, y + 54), 12, GOLD if reason.is_empty() else MUTED)
-		button(Rect2(1010, y + 10, 130, 28), "制作" if reason.is_empty() else reason, "craft", n, reason.is_empty(), true)
-		row += 1
-	text("点击方块放入当前快捷格；已有物品直接切换。", Vector2(132, 625), 13, MUTED)
-	text("附近设施：%s  /  %s" % ["工作台 ✓" if game.near_station(Data.Block.BENCH) else "无工作台", "熔炉 ✓" if game.near_station(Data.Block.FURNACE) else "无熔炉"], Vector2(606, 627), 14, MINT)
+	detail.inventory_panel()
 
 func merchant_panel(reward: bool = false) -> void:
 	scrim()
@@ -628,17 +618,17 @@ func guide() -> void:
 	box(Rect2(177, 63, 926, 593), INK, EDGE, 14)
 	text("在旷野，慢慢建立自己的生活。", Vector2(215, 115), 28, WHITE, true)
 	var entries: Array[String] = [
-		"A / D 或 ← / → 移动，空格 / W / ↑ 跳跃。",
-		"1 号镐：长按鼠标左键挖掘。砍断树干可收集上方原木。",
-		"数字键 / 滚轮切换快捷栏；选择方块，再按右键放置。",
-		"Tab / I 打开背包与制作，靠近放下的工作台、熔炉解锁配方。",
-		"铜镐可挖铁矿；铁镐可挖水晶和大地之心。矿石需煤炭熔炼。",
-		"J 随时挥剑；选 2 号剑也可长按左键攻击。H 饮用治疗药水。",
-		"每 10 分钟一轮昼夜，夜间与地下怪物更强。火把可永久照明。",
-		"第 5、10、15……个游戏日，CTO 神父来到出生地左侧；靠近按 E 交易。",
-		"每次停留一个游戏日；到访时补货，同次到访读档不会刷新库存。",
-		"M 查看探索地图；R 返回出生地。倒下可复活，物品和建筑保留。",
-		"30 秒自动保存；F5 手动保存。Esc 暂停，退出时会先保存。"
+		"A / D 移动，空格跳跃；S 下穿平台，绳索上 W / S 攀爬。",
+		"左键采掘；数字键 / 滚轮切换物品；右键建造、种植或使用桶。",
+		"Tab / I 制作：建造、冶炼、战斗、Boss 四类配方均可翻页。",
+		"工作台 → 熔炉 → 铁砧 → 祭坛；铜、铁、金、熔火、秘银依次升级。",
+		"建封闭住宅、铺背景墙，放工作台、椅子、火把和两格高木门。",
+		"F7 检查住房；E 开门、开箱、交谈、采药，合格住宅的床可设重生点。",
+		"装备护甲和饰品；Q 发射钩爪。弓枪耗弹药，法杖耗魔力并自动回复。",
+		"T 查看 8 场 Boss 成长；召唤物受前置、区域和昼夜条件限制。",
+		"击败地狱构建之墙开启困难世界；继续成长并战胜终焉策划救回公主。",
+		"CTO 神父每 5 个游戏日到访一次，E 交易；Code Review 可赢一件物资。",
+		"M 地图，R 回家，H 治疗；F5 保存，Esc 暂停。30 秒自动保存。"
 	]
 	for index in range(entries.size()):
 		text(entries[index], Vector2(216, 163 + index * 35), 17, MUTED)
@@ -668,6 +658,8 @@ func click(p: Vector2) -> bool:
 	for entry in buttons.duplicate():
 		if entry.state != game.state or not entry.rect.has_point(p):
 			continue
+		if detail.click(entry.action, entry):
+			return true
 		match entry.action:
 			"new":
 				if game.save_available:
@@ -692,7 +684,9 @@ func click(p: Vector2) -> bool:
 			"recall": game.respawn()
 			"slot": game.selected = entry.index
 			"equip": game.equip_item(entry.item)
-			"category": game.recipe_category = entry.index
+			"category":
+				game.recipe_category = entry.index
+				game.adventure.recipe_page = 0
 			"craft": game.craft(entry.index)
 			"buy": game.buy(entry.index)
 			"review_start": game.start_review()

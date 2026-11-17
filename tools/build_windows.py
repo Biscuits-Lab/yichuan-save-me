@@ -89,7 +89,7 @@ def fetch_template() -> Path:
 def main() -> None:
     fetch_template()
     engine = ROOT / ".tools/godot/Godot_v4.5.2-stable_win64_console.exe"
-    output = ROOT / "build/windows-v0.5.1"
+    output = ROOT / "build/windows-v0.6.1"
     output.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [str(engine), "--headless", "--path", str(ROOT), "--log-file", str(ROOT / ".tools/export.log"), "--export-release", "Windows Desktop"],
@@ -100,11 +100,11 @@ def main() -> None:
     if not exe.exists():
         raise RuntimeError("Export did not produce the game executable")
     print(f"Built: {exe} ({exe.stat().st_size / 1024 / 1024:.1f} MiB)", flush=True)
-    bundle = ROOT / "build/毅川救我-v0.5.1-地牢与沙盒-Windows-x64.zip"
+    bundle = ROOT / "build/毅川救我-v0.6.1-地牢与沙盒-Windows-x64.zip"
     with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.write(exe, exe.name)
         archive.write(ROOT / "README.md", "README.md")
-        for document in ("sandbox-mode.md", "sandbox-self-check.md", "sandbox-priest-imagegen-prompt.txt"):
+        for document in ("sandbox-mode.md", "sandbox-self-check.md", "sandbox-adventure.md", "sandbox-priest-imagegen-prompt.txt"):
             archive.write(ROOT / "docs" / document, "docs/" + document)
         for license_path in (ROOT / "assets/fonts").glob("*-OFL.txt"):
             archive.write(license_path, "licenses/" + license_path.name)

@@ -1,4 +1,5 @@
 extends RefCounted
+const Catalog = preload("res://scripts/sandbox_catalog.gd")
 ## Deterministic, editable world data. Simulation and saves share these tile IDs.
 const TILE: int = 24
 const WIDTH: int = 576
@@ -25,7 +26,7 @@ const REVIEW_PAIRS: Array[Dictionary] = [
 	{"code":"UNDO", "name":"回滚失效", "color":"b8ca9f"},
 	{"code":"BUILD", "name":"构建失败", "color":"e0b899"}
 ]
-enum Block { AIR, GRASS, DIRT, STONE, WOOD, LEAF, COPPER, IRON, CRYSTAL, PLANK, TORCH, BENCH, FURNACE, BEDROCK, SAND, SNOW, CORE, COAL, BEACON }
+enum Block { AIR, GRASS, DIRT, STONE, WOOD, LEAF, COPPER, IRON, CRYSTAL, PLANK, TORCH, BENCH, FURNACE, BEDROCK, SAND, SNOW, CORE, COAL, BEACON, PLATFORM, DOOR, CHAIR, CHEST, BED, ANVIL, ALTAR, CAMPFIRE, GOLD, MOLTEN, MYTHRIL, LIFE_CRYSTAL, HERB, SAPLING, ROPE, DOOR_OPEN, OBSIDIAN, MUSHROOM, JUNGLE_GRASS, CORRUPT_STONE, DUNGEON_BRICK, STARSHARD, POT }
 const BLOCKS: Array[Dictionary] = [
 	{"name":"空气", "item":"", "solid":false, "hardness":0.0, "tier":0, "color":"00000000"},
 	{"name":"草地", "item":"dirt", "solid":true, "hardness":0.28, "tier":0, "color":"6e9c55"},
@@ -45,9 +46,32 @@ const BLOCKS: Array[Dictionary] = [
 	{"name":"雪块", "item":"snow", "solid":true, "hardness":0.3, "tier":0, "color":"c5dbe1"},
 	{"name":"大地之心", "item":"core", "solid":true, "hardness":3.0, "tier":2, "color":"f4cf84"},
 	{"name":"煤矿", "item":"coal", "solid":true, "hardness":0.75, "tier":0, "color":"333e4b"},
-	{"name":"归途信标", "item":"beacon", "solid":false, "hardness":0.5, "tier":0, "color":"8df3cf"}
+	{"name":"归途信标", "item":"beacon", "solid":false, "hardness":0.5, "tier":0, "color":"8df3cf"},
+	{"name":"木平台","item":"platform","solid":true,"hardness":0.15,"tier":0,"color":"c7a377"},
+	{"name":"木门","item":"door","solid":true,"hardness":0.3,"tier":0,"color":"b68a60"},
+	{"name":"木椅","item":"chair","solid":false,"hardness":0.2,"tier":0,"color":"c49765"},
+	{"name":"储物箱","item":"chest","solid":false,"hardness":0.4,"tier":0,"color":"d3a661"},
+	{"name":"床","item":"bed","solid":false,"hardness":0.3,"tier":0,"color":"cc8e9a"},
+	{"name":"铁砧","item":"anvil","solid":false,"hardness":0.5,"tier":0,"color":"a3b3c2"},
+	{"name":"召唤祭坛","item":"altar","solid":false,"hardness":0.7,"tier":0,"color":"b699db"},
+	{"name":"篝火","item":"campfire","solid":false,"hardness":0.2,"tier":0,"color":"f6b66d"},
+	{"name":"金矿","item":"gold_ore","solid":true,"hardness":1.5,"tier":2,"color":"edcc71"},
+	{"name":"熔火矿","item":"molten_ore","solid":true,"hardness":1.9,"tier":3,"color":"ed8c57"},
+	{"name":"秘银矿","item":"mythril_ore","solid":true,"hardness":2.2,"tier":4,"color":"85ddd0"},
+	{"name":"生命水晶","item":"life_crystal","solid":false,"hardness":0.5,"tier":0,"color":"f58f9d"},
+	{"name":"药草","item":"herb","solid":false,"hardness":0.1,"tier":0,"color":"83bf82"},
+	{"name":"幼树","item":"acorn","solid":false,"hardness":0.15,"tier":0,"color":"a8bd79"},
+	{"name":"绳索","item":"rope","solid":false,"hardness":0.1,"tier":0,"color":"c6b491"},
+	{"name":"开启的木门","item":"door","solid":false,"hardness":0.3,"tier":0,"color":"b68a60"},
+	{"name":"黑曜石","item":"obsidian","solid":true,"hardness":1.6,"tier":2,"color":"8a78a4"},
+	{"name":"蘑菇","item":"mushroom","solid":false,"hardness":0.1,"tier":0,"color":"dca3a0"},
+	{"name":"丛林草地","item":"dirt","solid":true,"hardness":0.3,"tier":0,"color":"78a66c"},
+	{"name":"侵蚀岩","item":"stone","solid":true,"hardness":1.2,"tier":2,"color":"8e77a7"},
+	{"name":"地牢砖","item":"stone","solid":true,"hardness":1.6,"tier":3,"color":"748393"},
+	{"name":"星辉矿","item":"starshard","solid":true,"hardness":2.5,"tier":5,"color":"a2d7fb"},
+	{"name":"遗迹陶罐","item":"coin","solid":false,"hardness":0.1,"tier":0,"color":"b79477"}
 ]
-const ITEMS: Dictionary = {
+const BASE_ITEMS: Dictionary = {
 	"pickaxe":{"name":"采掘镐", "color":"c6d0d8", "block":0}, "sword":{"name":"猎虫剑", "color":"e0e9df", "block":0},
 	"dirt":{"name":"泥土", "color":"956447", "block":Block.DIRT}, "stone":{"name":"石块", "color":"828b98", "block":Block.STONE},
 	"wood":{"name":"原木", "color":"af8052", "block":Block.WOOD}, "plank":{"name":"木板", "color":"c69c6e", "block":Block.PLANK},
@@ -61,8 +85,9 @@ const ITEMS: Dictionary = {
 	"beacon":{"name":"归途信标", "color":"8df3cf", "block":Block.BEACON}, "coin":{"name":"旧银币", "color":"e5ce95", "block":0},
 	"lantern":{"name":"猎人提灯", "color":"f6d193", "block":0}, "charm":{"name":"神父护符", "color":"b6cde0", "block":0}
 }
+static var ITEMS: Dictionary = item_catalog()
 const HOTBAR: Array[String] = ["pickaxe", "sword", "dirt", "stone", "wood", "plank", "torch", "bench", "furnace", "potion"]
-const RECIPES: Array[Dictionary] = [
+const BASE_RECIPES: Array[Dictionary] = [
 	{"id":"plank", "amount":4, "cost":{"wood":1}, "station":0, "category":0, "desc":"搭桥、垫脚，也能建造自己的小屋。"},
 	{"id":"torch", "amount":4, "cost":{"wood":1, "gel":1}, "station":0, "category":0, "desc":"驱散地下与夜晚的黑暗。"},
 	{"id":"torch", "amount":4, "cost":{"wood":1, "coal":1}, "station":0, "category":0, "desc":"用煤炭替代凝胶制作照明。"},
@@ -75,8 +100,26 @@ const RECIPES: Array[Dictionary] = [
 	{"id":"iron_pick", "name":"铁镐", "amount":1, "cost":{"iron_bar":6, "wood":8}, "station":Block.BENCH, "category":1, "tier":2, "desc":"采掘进一步加速，可开采水晶与大地之心。"},
 	{"id":"copper_sword", "name":"铜剑", "amount":1, "cost":{"copper_bar":4, "wood":4}, "station":Block.BENCH, "category":2, "tier":1, "desc":"剑伤害提升到 24。"},
 	{"id":"iron_sword", "name":"铁剑", "amount":1, "cost":{"iron_bar":5, "wood":4}, "station":Block.BENCH, "category":2, "tier":2, "desc":"剑伤害提升到 36。"},
-	{"id":"beacon", "amount":1, "cost":{"core":1, "crystal":12, "iron_bar":4}, "station":Block.BENCH, "category":2, "desc":"在地表放置信标，完成旷野探索。之后仍可继续建造。"}
+	{"id":"beacon", "amount":1, "cost":{"core":1, "crystal":12, "iron_bar":4}, "station":Block.BENCH, "category":2, "desc":"点亮地表营地，完成归途支线；继续挑战 Boss 救回公主。"}
 ]
+static var RECIPES: Array[Dictionary] = recipe_catalog()
+
+static func item_catalog() -> Dictionary:
+	var result: Dictionary = BASE_ITEMS.duplicate(true)
+	result.merge(Catalog.ITEMS, true)
+	return result
+
+static func recipe_catalog() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	result.assign(BASE_RECIPES)
+	result.append_array(Catalog.RECIPES)
+	return result
+
+static func equippable(id: String) -> bool:
+	if not ITEMS.has(id):
+		return false
+	var spec: Dictionary = ITEMS[id]
+	return spec.block != 0 or id in ["pickaxe", "sword", "potion"] or spec.has("weapon") or spec.has("use") or spec.has("summon")
 const OFFERS: Array[Dictionary] = [
 	{"id":"torch", "amount":12, "price":6, "stock":8, "desc":"一束火光，足够走过下一段黑夜。"},
 	{"id":"potion", "amount":3, "price":12, "stock":5, "desc":"恢复生命的应急补给。H 快捷使用。"},

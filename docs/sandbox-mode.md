@@ -4,7 +4,7 @@
 
 当前主场景为 `scenes/main.tscn`，由 `scripts/dungeon_run.gd` 驱动；`dungeon_data.gd` 生成俯视房间与走廊，`dungeon_view.gd` 负责世界和固定屏幕 UI。它的战斗、碰撞、导航、房间封路和装备交易都以俯视平面为前提。早期 `game.gd` / `samurai.gd` 虽然提供横版跳跃，但依赖关卡、房门和旧战斗状态，直接复用会让可破坏地形与旧逻辑互相牵制。
 
-新增模式因此采用独立场景、数据和运行状态，通过原主菜单按钮或 B 进入。复用毅川、怪物、字体、音效和图集切片工具，地牢玩法与纪录使用原来的入口和存储。当前版本为 0.5.1。
+新增模式因此采用独立场景、数据和运行状态，通过原主菜单按钮或 B 进入。复用毅川、怪物、字体、音效和图集切片工具，地牢玩法与纪录使用原来的入口和存储。当前版本为 0.6.1；成长、住房、液体、装备和怪物扩充见 [sandbox-adventure.md](sandbox-adventure.md)。
 
 ## 实现结构
 
@@ -48,19 +48,21 @@
 
 沙盒采用独立的 `user://sandbox-v1.save`，含地形、探索迷雾、背包、装备、快捷栏、位置、生命、游戏时间、里程碑、商人库存和 Review 资格。每 30 秒自动保存，F5 手动保存，退出、交易和领奖也保存。先写临时文件，校验旧主档后备份并替换；损坏主档不会覆盖有效备份。读取使用 `get_var(false)`，检查类型、尺寸、方块编号、工具等级、数量、位置、库存和奖励状态。死亡存档按正常复活恢复，保留建筑与物品。文件接口参考 [Godot 4.5 FileAccess](https://docs.godotengine.org/en/4.5/classes/class_fileaccess.html)。
 
-当前一个世界槽；创建新世界有替换确认。地牢纪录与早期横版纪录保持独立。此版不含液体流动、多人联网、住房判定、农作物、地下 Boss 进度树或无限世界。沙块为静态可建造方块，没有重力模拟。
+当前一个世界槽；创建新世界有替换确认。地牢纪录与早期横版纪录保持独立。v0.6.0 加入液体、住房、种植与八场 Boss 成长树；仍不含联网或无限世界。沙块为静态可建造方块，没有重力模拟。新增数据放在可选 `adventure` 字段中，旧档继续读取，详见扩充说明。
 
 ## 验证与本地构建
 
 ```powershell
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file .tools/sandbox-tests.log --script tools/test_sandbox.gd -- --no-audio
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file .tools/dungeon-regression.log --script tools/test_dungeon.gd -- --no-audio
-.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --path . --audio-driver Dummy --log-file .tools/sandbox-render.log --script tools/render_sandbox.gd -- --no-audio
-.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --path . --audio-driver Dummy --log-file .tools/sandbox-audit.log --script tools/test_sandbox_regressions.gd -- --no-audio
+python tools/run_godot_offscreen.py -- .tools/godot/Godot_v4.5.2-stable_win64_console.exe --path . --audio-driver Dummy --log-file .tools/sandbox-render.log --script tools/render_sandbox.gd -- --no-audio
+python tools/run_godot_offscreen.py -- .tools/godot/Godot_v4.5.2-stable_win64_console.exe --path . --audio-driver Dummy --log-file .tools/sandbox-audit.log --script tools/test_sandbox_regressions.gd -- --no-audio
 python tools/build_windows.py
 ```
 
 自动检查涵盖地形、碰撞、挖掘、制作、战斗、昼夜、五日到访、库存持久化、存档异常、真实鼠标和键盘事件，以及 Review 配对、超时、回合限制、最后一回合获胜、领奖、防重复领取和旧存档兼容。
+
+测试不得弹窗到使用者的屏幕。纯逻辑使用 `--headless`；需要 GPU 和实际输入的检查统一通过 `run_godot_offscreen.py` 在 Windows 隔离桌面创建窗口，绝不切换活动桌面。单纯把窗口移到负坐标或最小化不作为离屏方案。渲染结果保存为图片，日志写入 `.tools`。
 
 自检中复现的问题、修复和本轮检查结果见 [sandbox-self-check.md](sandbox-self-check.md)。
 
