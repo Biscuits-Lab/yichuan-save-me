@@ -18,15 +18,16 @@ func snap(label: String) -> Image:
 	assert(error == OK, "Preview must save successfully")
 	return captured
 
-func service_room(kind: String) -> void:
+func service_room(kind: String, visit: bool = true, npc_id: String = "") -> void:
 	for candidate in range(1, 121):
 		var generated: Dictionary = game.Data.generate(candidate, 0)
 		for room in generated.rooms:
-			if room.type == kind:
+			if room.type == kind and (npc_id.is_empty() or room.npc >= 0 and game.Data.NPCS[room.npc].id == npc_id):
 				game.seed_value = candidate
 				game.floor_index = 0
 				game.generate_floor()
-				game.enter_room(room.id)
+				if visit:
+					game.enter_room(room.id)
 				return
 	push_error("No service preview seed found")
 
@@ -87,32 +88,32 @@ func run() -> void:
 	game.clear_room()
 	game.texts.clear()
 	game.effects.clear()
-	service_room("shop")
+	service_room("npc", true, "coin")
 	game.open_shop()
 	game.points = 126
 	await snap("dungeon-04-shop")
-	assert(game.view.overlay.buttons.any(func(entry: Dictionary) -> bool: return entry.action == "refresh"), "Dedicated shops retain the refresh button")
+	assert(game.view.overlay.buttons.any(func(entry: Dictionary) -> bool: return entry.action == "refresh"), "The NPC merchant exposes the refresh button")
 	game.add_item("blade")
 	game.add_item("vest")
 	game.toggle_inventory()
 	await snap("dungeon-05-fusion")
 	game.state = "playing"
 	game.current_room().cleared = true
-	service_room("npc")
-	game.current_room().npc = 3
+	service_room("npc", true, "basan")
 	game.player = game.npc_position() + Vector2(86, 30)
 	game.state = "playing"
 	game.knight_active = false
 	await snap("dungeon-06a-basan-world")
-	game.selected_npc = 3
+	game.selected_npc = game.current_room().npc
 	game.state = "npc"
 	await snap("dungeon-06b-basan")
-	game.current_room().npc = 6
-	game.selected_npc = 6
+	service_room("npc", true, "onion")
+	game.selected_npc = game.current_room().npc
 	game.state = "npc"
 	await snap("dungeon-06-npc")
-	game.current_room().npc = 7
-	game.selected_npc = 7
+	service_room("npc", true, "jiahao")
+	game.selected_npc = game.current_room().npc
+	game.state = "npc"
 	await snap("dungeon-06c-jiahao")
 	game.floor_index = game.Data.FLOOR_COUNT - 1
 	game.generate_floor()
@@ -156,8 +157,8 @@ func run() -> void:
 	for i in range(4):
 		game.buy(i)
 	await snap("dungeon-14-shop-sold-out")
-	assert(not game.refresh_shop(), "Sold-out combat supplies cannot refresh")
-	await snap("dungeon-15-supply-final-stock")
+	assert(game.refresh_shop() and not game.stock[0].sold, "Sold-out combat supplies can refresh")
+	await snap("dungeon-15-supply-refreshed")
 	game.floor_index = 0
 	game.generate_floor()
 	for room in game.rooms:
@@ -246,22 +247,23 @@ func run() -> void:
 	for skill in game.Data.SKILLS:
 		game.skill_levels[skill.id] = 2
 	game.view.move_pointer(Vector2(700, 120))
-	game.view.click(game.view.overlay.buttons.filter(func(entry: Dictionary) -> bool: return entry.action == "inventory_tab" and entry.index == 1)[0].rect.get_center())
-	await snap("dungeon-19e-character-details")
-	assert(game.view.overlay.inventory_tab == 1 and game.view.overlay.item_slots.is_empty() and game.view.overlay.item_context.is_empty(), "Character page hides item slots and stale item interactions")
+	await snap("dungeon-19e-inventory-and-character-details")
+	assert(not game.view.overlay.item_slots.is_empty() and game.view.overlay.item_context.is_empty(), "Inventory items remain visible beside character stats")
 	var frozen: Vector2 = game.player
 	var frozen_time: float = game.run_time
 	game._physics_process(0.5)
 	assert(game.player == frozen and game.run_time == frozen_time, "Character attributes keep the game paused")
-	game.view.click(game.view.overlay.buttons.filter(func(entry: Dictionary) -> bool: return entry.action == "inventory_tab" and entry.index == 0)[0].rect.get_center())
-	await snap("dungeon-19f-backpack-return")
-	assert(game.view.overlay.inventory_tab == 0 and game.view.overlay.equipment_page == 1 and not game.view.overlay.item_slots.is_empty(), "Returning to the backpack retains its page and item controls")
+	game.view.click(Vector2(1168, 42))
+	await snap("dungeon-19f-confirm-return-to-title")
+	assert(game.state == "confirm_title", "Returning to the title requires a separate confirmation")
+	game._unhandled_input(escape)
+	assert(game.state == "inventory" and game.view.overlay.equipment_page == 1, "Canceling the confirmation preserves the active equipment page")
 	game.toggle_inventory()
 	game.current_room().type = "combat"
 	game.current_room().cleared = false
 	game.clear_room()
 	await snap("dungeon-20-one-time-supplies")
-	assert(game.view.overlay.buttons.all(func(entry: Dictionary) -> bool: return entry.action != "refresh"), "Combat supply UI offers no refresh action")
+	assert(game.view.overlay.buttons.any(func(entry: Dictionary) -> bool: return entry.action == "refresh"), "Combat supplies offer a refresh action")
 	game.view.click(Vector2(1024, 571))
 	assert(game.state == "playing" and not game.has_shop(), "Closing supplies must permanently finish the visit")
 	game.player = game.room_center()
@@ -280,7 +282,14 @@ func run() -> void:
 		boss.age = 2
 		boss.aim = (game.player - boss.p).normalized()
 		boss.phase = 1
-		boss.attack = 5
+		boss.attack = 5 if boss.moves.is_empty() else 0
+		if game.is_yang(boss):
+			boss.castle_shield = false
+			boss.windup = 0.0
+		if floor_number == 0:
+			game.player = game.room_center() + Vector2(-120, -150)
+			boss.p = game.room_center() + Vector2(95, -120)
+			boss.aim = boss.p.direction_to(game.player)
 		game.boss_attack(boss)
 		game.update_projectiles(0.45)
 		await snap("dungeon-22-floor-%d-boss" % (floor_number + 1))
@@ -331,25 +340,15 @@ func run() -> void:
 			break
 	game.enemies.clear()
 	game.player = game.room_center() + Vector2(-160, 70)
-	for kind in ["slime", "splitter", "minislime", "dasher", "charger", "ranged"]:
+	for kind in game.Data.FLOOR_ENEMIES[0] + [game.Data.FLOOR_ELITES[0]]:
 		var i: int = game.enemies.size()
 		var enemy: Dictionary = game.spawn_enemy(game.room_center() + Vector2(-160 + i * 90, -60), kind)
 		enemy.age = 2
-		if kind == "dasher":
+		if kind == "cone_mimic":
 			enemy.windup = 0.35
 			enemy.aim = (game.player - enemy.p).normalized()
 	await snap("dungeon-23-enemy-variety")
 	game.start_run(20261114, true)
-	for room in game.rooms:
-		if room.type == "treasure":
-			game.enter_room(room.id)
-			break
-	game.player = game.room_center()
-	game.interact()
-	assert(game.state == "treasure" and not game.current_room().used, "Chest must preview its rewards before equipping")
-	await snap("dungeon-24-chest-cards")
-	game.view.click(Vector2(350, 590))
-	assert(game.state == "playing" and game.current_room().used and game.weapons.size() == 1, "Chest abandon button must skip the reward")
 	for room in game.rooms:
 		if room.type == "elite":
 			game.enter_room(room.id)
@@ -375,7 +374,7 @@ func run() -> void:
 	game.view.move_pointer(Vector2(700, 120))
 	game.toggle_inventory()
 	await snap("dungeon-26-office-build")
-	assert(game.view.overlay.item_slots.all(func(slot: Dictionary) -> bool: return slot.rect.size == Vector2(64, 64) and Rect2(224, 100, 832, 520).encloses(slot.rect)), "Inventory cards must be small squares inside the compact panel")
+	assert(game.view.overlay.item_slots.all(func(slot: Dictionary) -> bool: return slot.rect.size == Vector2(64, 64) and Rect2(32, 90, 730, 530).encloses(slot.rect)), "Inventory cells stay in the left pane beside the attributes")
 	game.view.move_pointer(game.view.overlay.item_slots.filter(func(slot: Dictionary) -> bool: return slot.entry.id == "glass_trophy")[0].rect.get_center())
 	await snap("dungeon-27-risky-item")
 	game.view.move_pointer(game.view.overlay.item_slots.filter(func(slot: Dictionary) -> bool: return slot.entry.id == "sniper")[0].rect.get_center())
@@ -396,7 +395,7 @@ func run() -> void:
 		game.add_item(spec.id)
 	game.view.move_pointer(Vector2(700, 120))
 	game.toggle_inventory()
-	for page in range(4):
+	for page in range(ceili(float(game.equipment.size()) / game.view.overlay.EQUIPMENT_PAGE_SIZE)):
 		game.view.overlay.equipment_page = page
 		await snap("dungeon-30-office-icons-page-%d" % (page + 1))
 	game.weapons.clear()
@@ -412,19 +411,19 @@ func run() -> void:
 
 func scene_change_previews() -> void:
 	game.start_run(20261114, true)
+	service_room("rest", false)
 	game.message_time = 0
 	game.speech_time = 0
-	for kind in ["treasure", "rest"]:
-		var room: Dictionary = game.rooms.filter(func(candidate: Dictionary) -> bool: return candidate.type == kind)[0]
-		var direction: int = room.links.find(room.parent)
-		game.player = room.doors[direction].move_toward(room.center, 24)
-		assert(not room.visited and not room.cleared and not room.started, "Facility preview does not activate its room")
-		var before: Image = await snap("dungeon-36-%s-before-visit" % kind)
-		room.cleared = true
-		var after: Image = await snap("dungeon-36-%s-after-visit" % kind)
-		var center: Vector2 = Vector2(640, 360) + (room.center - game.player) * game.camera.zoom
-		var sample := Rect2i(Vector2i(center) - Vector2i(55, 90), Vector2i(110, 115))
-		assert(before.get_region(sample).get_data() == after.get_region(sample).get_data(), "Facility artwork must already be present before visiting")
+	var rest_room: Dictionary = game.rooms.filter(func(candidate: Dictionary) -> bool: return candidate.type == "rest")[0]
+	var direction: int = rest_room.links.find(rest_room.parent)
+	game.player = rest_room.doors[direction].move_toward(rest_room.center, 24)
+	assert(not rest_room.visited and not rest_room.cleared and not rest_room.started, "Facility preview does not activate its room")
+	var before: Image = await snap("dungeon-36-rest-before-visit")
+	rest_room.cleared = true
+	var after: Image = await snap("dungeon-36-rest-after-visit")
+	var center: Vector2 = Vector2(640, 360) + (rest_room.center - game.player) * game.camera.zoom
+	var sample := Rect2i(Vector2i(center) - Vector2i(55, 90), Vector2i(110, 115))
+	assert(before.get_region(sample).get_data() == after.get_region(sample).get_data(), "Facility artwork must already be present before visiting")
 	game.start_run(20261114, true)
 	game.floor_index = 4
 	game.generate_floor()

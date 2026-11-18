@@ -12,11 +12,26 @@ var basan_atlas: RefCounted
 var jiahao_atlas: RefCounted
 var shark_atlas: RefCounted
 var yamada_atlas: RefCounted
+var yamada_split_atlas: RefCounted
 var wilds_atlas: RefCounted
 var stage_atlases: Dictionary = {}
 var item_atlas: RefCounted
+var workplace_item_atlas: RefCounted
 var item_icons: Dictionary = {}
 var enemy_atlas: RefCounted
+var themed_enemy_atlas: RefCounted
+var street_atlas: RefCounted
+var street_surface_atlas: RefCounted
+var street_enemy_atlas: RefCounted
+var security_atlas: RefCounted
+var home_enemy_atlas: RefCounted
+var ruoyu_atlases: Array[RefCounted] = []
+var ruoyu_unseal_atlas: RefCounted
+var ruoyu_pounce_atlas: RefCounted
+var yang_atlas: RefCounted
+var yang_escort_atlas: RefCounted
+var yang_peak_atlas: RefCounted
+var ruoyu_unseal_time: float = 0.0
 var environment_atlas: RefCounted
 var vfx_atlas: RefCounted
 var utility_atlas: RefCounted
@@ -49,6 +64,8 @@ var kills: int = 0
 var cleared_count: int = 0
 var weapons: Array[Dictionary] = []
 var equipment: Array[Dictionary] = []
+var turrets: Array[Dictionary] = []
+var turret_ready_at: Dictionary = {}
 var enemies: Array[Dictionary] = []
 var projectiles: Array[Dictionary] = []
 var drops: Array[Dictionary] = []
@@ -100,6 +117,7 @@ var cheat_invincible: bool = false
 var cheat_one_hit: bool = false
 var assisted: bool = false
 var selected_npc: int = -1
+var npc_reply: String = ""
 var best_score: int = 0
 var best_floor: int = 0
 var record_path: String = "user://dungeon-record-v1.json"
@@ -139,15 +157,55 @@ func _ready() -> void:
 	basan_atlas = Atlas.new(load("res://assets/generated/dungeon/basan.png"), 2, 1)
 	jiahao_atlas = Atlas.new(load("res://assets/generated/dungeon/jiahao.png"), 2, 1)
 	shark_atlas = Atlas.new(load("res://assets/generated/dungeon/big-shark.png"), 2, 2)
-	yamada_atlas = Atlas.new(load("res://assets/generated/dungeon/yamada.png"), 2, 2)
+	yamada_atlas = Atlas.new(load("res://assets/generated/dungeon/yamada-actions.png"), 4, 2)
+	yamada_split_atlas = Atlas.new(load("res://assets/generated/dungeon/yamada-split.png"), 2, 2)
+	yamada_atlas.row_heights.fill(yamada_atlas.frames[0].height)
+	yamada_split_atlas.row_heights.fill(yamada_split_atlas.frames[0].height)
 	wilds_atlas = Atlas.new(load("res://assets/generated/dungeon/wilds-cast.png"), 4, 4)
 	stage_atlases["wilds"] = Atlas.new(load("res://assets/generated/dungeon/environment-wilds.png"), 4, 3)
-	for theme in ["server", "garden", "sumo"]:
+	for theme in ["server", "sumo"]:
 		stage_atlases[theme] = Atlas.new(load("res://assets/generated/dungeon/environment-%s.png" % theme), 4, 2)
+	stage_atlases["dark_home"] = Atlas.new(load("res://assets/generated/dungeon/environment-dark-home.png"), 4, 3, false, {
+		0:Rect2i(2, 2, 380, 336), 1:Rect2i(386, 2, 380, 336), 2:Rect2i(770, 2, 380, 336),
+		3:Rect2i(1154, 2, 380, 336), 8:Rect2i(2, 685, 380, 335)
+	}, [4, 5, 6, 7, 9, 10, 11])
 	item_atlas = Atlas.new(load("res://assets/generated/dungeon/items.png"), 4, 3)
+	workplace_item_atlas = Atlas.new(load("res://assets/generated/dungeon/workplace-items.png"), 6, 6, false, {5:Rect2i(1051, 0, 203, 209)}, range(36))
 	for spec in Data.EQUIPMENT + Data.WEAPONS.slice(6):
-		item_icons[spec.id] = Atlas.new(load("res://assets/generated/dungeon/icons/%s.png" % spec.id), 1, 1)
-	enemy_atlas = Atlas.new(load("res://assets/generated/dungeon/enemies.png"), 4, 4)
+		if not spec.has("art_frame"):
+			item_icons[spec.id] = Atlas.new(load("res://assets/generated/dungeon/icons/%s.png" % spec.id), 1, 1)
+	# Yang's head extends above the equal-grid seam. Split both rows in the transparent gap.
+	var enemy_cells: Dictionary = {}
+	for column in range(4):
+		var x: int = column * 313
+		enemy_cells[8 + column] = Rect2i(x, 626, 313, 239)
+		enemy_cells[12 + column] = Rect2i(x, 865, 313, 389)
+	enemy_atlas = Atlas.new(load("res://assets/generated/dungeon/enemies.png"), 4, 4, false, enemy_cells)
+	# The orchid's petal tips cross one grid line, so these cells cut between the silhouettes.
+	themed_enemy_atlas = Atlas.new(load("res://assets/generated/dungeon/floor-monsters.png"), 4, 6, false, {
+		11:Rect2i(768, 512, 256, 232), 15:Rect2i(752, 755, 272, 269)
+	}, range(24))
+	street_atlas = Atlas.new(load("res://assets/generated/dungeon/zhangjiang-street.png"), 1, 1, false, {0:Rect2i(0, 512, 784, 512)}, [0])
+	street_surface_atlas = Atlas.new(load("res://assets/generated/dungeon/zhangjiang-tiles.png"), 4, 2, false, {
+		0:Rect2i(18, 15, 344, 482), 1:Rect2i(394, 10, 361, 491), 5:Rect2i(405, 620, 350, 275)
+	}, [2, 3, 4, 5, 6, 7])
+	street_enemy_atlas = Atlas.new(load("res://assets/generated/dungeon/zhangjiang-enemy-actions.png"), 8, 3, false, {19:Rect2i(652, 590, 242, 297)}, range(24))
+	security_atlas = Atlas.new(load("res://assets/generated/dungeon/security-uncle-actions.png"), 5, 2, false, {}, range(10))
+	home_enemy_atlas = Atlas.new(load("res://assets/generated/dungeon/dark-home-enemies.png"), 6, 3, false, {}, range(18))
+	ruoyu_atlases.append(Atlas.new(load("res://assets/generated/dungeon/ruoyu-actions.png"), 6, 2, false, {}, range(12)))
+	ruoyu_atlases.append(Atlas.new(load("res://assets/generated/dungeon/ruoyu-unsealed-actions.png"), 6, 2, false, {}, range(12)))
+	ruoyu_unseal_atlas = Atlas.new(load("res://assets/generated/dungeon/ruoyu-unseal.png"), 2, 2, false, {}, range(4))
+	ruoyu_pounce_atlas = Atlas.new(load("res://assets/generated/dungeon/ruoyu-pounce.png"), 4, 2, false, {}, range(8))
+	yang_atlas = Atlas.new(load("res://assets/generated/dungeon/yang-actions.png"), 4, 3, false, {}, range(8))
+	# The wider casting poses cross the nominal column seams; cut in the transparent gutters.
+	yang_escort_atlas = Atlas.new(load("res://assets/generated/dungeon/yang-escorts.png"), 6, 2, false, {
+		10: Rect2i(1448, 362, 330, 362), 11: Rect2i(1778, 362, 394, 362)
+	}, range(12))
+	yang_peak_atlas = Atlas.new(load("res://assets/generated/dungeon/yang-peak.png"), 4, 3, false, {
+		4: Rect2i(0, 362, 333, 362), 5: Rect2i(333, 362, 391, 362),
+		8: Rect2i(0, 724, 333, 362), 9: Rect2i(333, 724, 391, 362),
+		10: Rect2i(724, 724, 322, 362), 11: Rect2i(1046, 724, 402, 362)
+	}, range(12))
 	environment_atlas = Atlas.new(load("res://assets/generated/dungeon/environment-office.png"), 4, 3)
 	vfx_atlas = Atlas.new(load("res://assets/generated/dungeon/combat-vfx.png"), 4, 4)
 	utility_atlas = Atlas.new(load("res://assets/generated/dungeon/dungeon-utility.png"), 4, 4)
@@ -199,6 +257,7 @@ func start_run(chosen_seed: int = 0, skip_story: bool = false) -> void:
 	contract_pending = false
 	weapons.clear()
 	equipment.clear()
+	turret_ready_at.clear()
 	add_item(Data.WEAPONS[selected_weapon].id)
 	health = max_health()
 	assisted = cheat_invincible or cheat_one_hit
@@ -213,6 +272,8 @@ func start_run(chosen_seed: int = 0, skip_story: bool = false) -> void:
 
 func generate_floor() -> void:
 	state = "loading"
+	ruoyu_unseal_time = 0.0
+	speech_time = 0.0
 	audio.play_floor_music(Data.FLOOR_STYLES[floor_index])
 	var generated: Dictionary = Data.generate(seed_value, floor_index)
 	rooms.assign(generated.rooms)
@@ -275,6 +336,7 @@ func activate_room(id: int) -> void:
 		if link >= 0:
 			rooms[link].revealed = true
 	projectiles.clear()
+	turrets.clear()
 	contract_active = false
 	room_time = 0
 	wave = 0
@@ -292,7 +354,7 @@ func activate_room(id: int) -> void:
 			wave_total = 1
 			spawn_enemy(room.center + Vector2(220, 0), "boss")
 			wave = 1
-			notify(Data.BOSS_NAMES[floor_index])
+			notify("杨梓亮 · 护盾开启，先击败召援" if Data.FLOOR_STYLES[floor_index] == "castle" else Data.BOSS_NAMES[floor_index])
 		else:
 			if contract_pending:
 				contract_pending = false
@@ -424,6 +486,13 @@ func _process(delta: float) -> void:
 		view.overlay.refresh_ui(delta)
 
 func _physics_process(delta: float) -> void:
+	if state == "ruoyu_unseal":
+		ruoyu_unseal_time += delta
+		if ruoyu_unseal_time >= Data.RUOYU_UNSEAL_DURATION:
+			state = "playing"
+			invulnerable = maxf(invulnerable, 0.35)
+			notify("若宇 · 封印解除")
+		return
 	if state != "playing":
 		return
 	previous_player = player
@@ -470,6 +539,7 @@ func _physics_process(delta: float) -> void:
 	if state != "playing":
 		return
 	update_weapons(delta)
+	update_turrets(delta)
 	update_knight(delta)
 	update_projectiles(delta)
 	update_drops(delta)
@@ -515,13 +585,67 @@ func use_onion() -> void:
 	notify("洋葱守护 · %.1f 秒护盾" % shield_time)
 	audio.sfx("skill")
 
+func turret_cooldown(id: String) -> float:
+	return maxf(0.0, float(turret_ready_at.get(id, 0.0)) - run_time)
+
+func deploy_turret() -> bool:
+	if state != "playing" or rooms.is_empty() or current_room().cleared:
+		return false
+	if not current_room().rect.grow(-18).has_point(player) or not walkable(player, 17):
+		return false
+	for id in Data.TURRETS:
+		if turret_cooldown(id) > 0.0:
+			continue
+		var tier: int = 0
+		for entry in equipment:
+			if entry.id == id:
+				tier = maxi(tier, entry.tier)
+		if tier == 0:
+			continue
+		var spec: Dictionary = Data.TURRETS[id]
+		var quality: float = 0.6 + 0.4 * Data.equipment_multiplier(tier)
+		turrets.append({"kind":"turret", "id":id, "p":player, "life":spec.lifetime, "wait":0.0, "quality":quality})
+		turret_ready_at[id] = run_time + spec.cooldown
+		notify("已部署 · " + Data.item(id).name)
+		audio.sfx("skill")
+		return true
+	return false
+
+func update_turrets(delta: float) -> void:
+	for i in range(turrets.size() - 1, -1, -1):
+		var turret: Dictionary = turrets[i]
+		turret.life -= delta
+		if turret.life <= 0.0:
+			turrets.remove_at(i)
+			continue
+		turret.wait -= delta
+		if turret.wait > 0.0:
+			continue
+		var spec: Dictionary = Data.TURRETS[turret.id]
+		var origin: Vector2 = turret.p
+		var target: Dictionary = target_near(origin, spec.reach)
+		if target.is_empty():
+			continue
+		turret.wait = spec.interval
+		var damage: float = spec.damage * turret.quality * damage_scale("magic")
+		var color: Color = Data.item(turret.id).color
+		if spec.pulse:
+			add_effect("burst", origin, origin, color, 0.32, spec.reach * 2)
+			for enemy in enemies.duplicate():
+				if enemy.age > 0.65 and origin.distance_to(enemy.p) < spec.reach and line_clear(origin, enemy.p):
+					hit_enemy(enemy, damage, origin)
+		else:
+			add_effect("beam", origin, target.p, color, 0.20, 0)
+			hit_enemy(target, damage, origin)
+		audio.sfx("hit")
+
 func spawn_wave() -> void:
 	if current_room().type not in ["combat", "elite"]:
 		return
 	wave += 1
 	wave_wait = 0
 	if current_room().type == "elite" and wave == wave_total:
-		var kind: String = current_room().get("elite_kind", "shark")
+		var kind: String = current_room().get("elite_kind", Data.FLOOR_ELITES[floor_index])
 		spawn_enemy(spawn_point(50), kind)
 		build_navigation(35)
 		notify("精英首领 · " + Data.ELITE_NAMES[kind])
@@ -532,14 +656,13 @@ func spawn_wave() -> void:
 
 func encounter_population() -> int:
 	var mode: String = current_room().get("encounter", "double")
-	var base: int = 28 if mode == "stream" else (18 if mode == "single" else 8 + wave * 4)
-	return base + floor_index * 4 + cleared_count + (4 if current_room().type == "elite" else 0)
+	var base: int = 20 if mode == "stream" else (14 if mode == "single" else 6 + wave * 3)
+	var clear_bonus: int = mini(floori(cleared_count / 3.0), 16)
+	return base + floor_index * 2 + clear_bonus + (4 if current_room().type == "elite" else 0)
 
 func spawn_batch(count: int) -> void:
-	var capacity: int = 20 + floor_index * 3
-	var kinds: Array[String] = ["slime", "ranged", "charger", "splitter", "dasher", "slime"]
-	if Data.FLOOR_STYLES[floor_index] == "wilds":
-		kinds.assign(["wolf", "ropehead", "wolf", "wolf", "ropehead"])
+	var capacity: int = 16 + floor_index * 2
+	var kinds: Array = Data.FLOOR_ENEMIES[floor_index]
 	for i in range(mini(count, spawn_remaining)):
 		if enemies.size() >= capacity:
 			break
@@ -578,9 +701,10 @@ func spawn_point(radius: float = 23.0) -> Vector2:
 func spawn_enemy(p: Vector2, kind: String = "slime") -> Dictionary:
 	if current_room().type == "npc":
 		return {}
-	var boss_kind: bool = kind == "boss" or kind in Data.ELITES
+	var elite: bool = Data.ELITE_NAMES.has(kind)
+	var boss_kind: bool = kind == "boss" or elite
 	var hp: float = (Data.BOSS_HEALTH[floor_index] if boss_kind else 22.0 + floor_index * 13) * Data.DIFFICULTIES[run_difficulty].enemy
-	if kind in Data.ELITES:
+	if elite:
 		hp = Data.SHARK_HEALTH[floor_index] * Data.DIFFICULTIES[run_difficulty].enemy
 		if kind == "brood":
 			hp *= 1.15
@@ -595,7 +719,17 @@ func spawn_enemy(p: Vector2, kind: String = "slime") -> Dictionary:
 		hp *= 0.9
 	if current_room().type == "elite" and not boss_kind:
 		hp *= 1.35
-	var enemy: Dictionary = {"p":p, "kind":kind, "hp":hp, "max_hp":hp, "radius":33.0 if kind in Data.ELITES else (29.0 if boss_kind else 16.0), "speed":(66.0 + floor_index * 12) * (1.0 + cleared_count * 0.02), "haste":1.0 + cleared_count * 0.025 + floor_index * 0.08, "age":0.0, "cooldown":2.0 + rng.randf(), "windup":0.0, "aim":Vector2.RIGHT, "charge":0.0, "flash":0.0, "path":PackedVector2Array(), "path_time":0.0, "dead":false, "phase":0}
+	if Data.YANG_ESCORT_NAMES.has(kind):
+		hp *= 2.5
+	var spec: Dictionary = Data.ENEMY_CAST.get(kind, {})
+	var enemy: Dictionary = {"p":p, "kind":kind, "hp":hp, "max_hp":hp, "radius":33.0 if elite else (29.0 if boss_kind else 16.0), "speed":(66.0 + floor_index * 12) * (1.0 + cleared_count * 0.02), "haste":1.0 + cleared_count * 0.025 + floor_index * 0.08, "age":0.0, "cooldown":2.0 + rng.randf(), "windup":0.0, "aim":Vector2.RIGHT, "charge":0.0, "flash":0.0, "path":PackedVector2Array(), "path_time":0.0, "dead":false, "phase":0}
+	enemy["art"] = Data.BOSS_ART[floor_index] if kind == "boss" else spec.get("art", -1)
+	enemy["moves"] = Data.BOSS_MOVES[floor_index] if kind == "boss" else spec.get("moves", [])
+	enemy["ranged"] = spec.get("ranged", false)
+	enemy["attack"] = 0
+	enemy["attack_pose_time"] = 0.0
+	enemy["moving"] = false
+	enemy["guard_time"] = 0.0
 	enemies.append(enemy)
 	enemy.previous_p = p
 	enemy["facing"] = 1.0 if player.x >= p.x else -1.0
@@ -613,24 +747,42 @@ func spawn_enemy(p: Vector2, kind: String = "slime") -> Dictionary:
 		enemy.speed *= 0.7
 	if boss_kind:
 		enemy.cooldown = 1.2
-		enemy["attack"] = 0
 		enemy["charge_left"] = 0
+		if is_ruoyu(enemy):
+			enemy["pounce_time"] = 0.0
+			enemy["pounce_recovery"] = 0.0
+		elif is_yang(enemy):
+			enemy["castle_shield"] = true
+			enemy["escorts_summoned"] = false
+			enemy["castle_weak_time"] = 0.0
+			enemy.windup = 0.85
 		if kind == "boss" and Data.FLOOR_STYLES[floor_index] in ["sumo", "wilds"]:
 			enemy.radius = 38.0
+			if Data.FLOOR_STYLES[floor_index] == "wilds":
+				boss_say(enemy, Data.NIULAI_QUOTE, INF)
 	return enemy
 
 func is_boss(enemy: Dictionary) -> bool:
-	return enemy.kind == "boss" or enemy.kind in Data.ELITES
+	return enemy.kind == "boss" or Data.ELITE_NAMES.has(enemy.kind)
+
+func is_ruoyu(enemy: Dictionary) -> bool:
+	return enemy.kind == "boss" and Data.FLOOR_STYLES[floor_index] == "dark_home"
+
+func is_yang(enemy: Dictionary) -> bool:
+	return enemy.kind == "boss" and Data.FLOOR_STYLES[floor_index] == "castle"
+
+func is_yamada(enemy: Dictionary) -> bool:
+	return enemy.kind == "boss" and Data.FLOOR_STYLES[floor_index] == "sumo"
 
 func boss_name(enemy: Dictionary) -> String:
-	return Data.ELITE_NAMES[enemy.kind] if enemy.kind in Data.ELITES else Data.BOSS_NAMES[floor_index]
+	return Data.ELITE_NAMES.get(enemy.kind, Data.BOSS_NAMES[floor_index])
 
 func target_near(p: Vector2, reach: float, include_cover: bool = false) -> Dictionary:
 	var result: Dictionary = {}
 	var closest: float = reach
 	for enemy in enemies:
 		var distance: float = enemy.p.distance_to(p)
-		if not enemy.dead and enemy.age > 0.65 and distance < closest and line_clear(p, enemy.p):
+		if not enemy.dead and not enemy.get("castle_shield", false) and enemy.age > 0.65 and distance < closest and line_clear(p, enemy.p):
 			closest = distance
 			result = enemy
 	if result.is_empty() and include_cover:
@@ -647,7 +799,11 @@ func update_enemies(delta: float) -> void:
 		if enemy.dead:
 			continue
 		enemy.age += delta
+		if enemy.has("speech_time"):
+			enemy.speech_time = maxf(0.0, enemy.speech_time - delta)
 		enemy.flash = maxf(0, enemy.flash - delta)
+		enemy.attack_pose_time = maxf(0.0, enemy.attack_pose_time - delta)
+		enemy.guard_time = maxf(0.0, enemy.guard_time - delta)
 		enemy["slow_time"] = maxf(0, enemy.get("slow_time", 0.0) - delta)
 		if enemy.age < 0.8:
 			continue
@@ -657,22 +813,90 @@ func update_enemies(delta: float) -> void:
 		enemy.cooldown -= delta * enemy.haste
 		var speed: float = enemy.speed
 		if is_boss(enemy):
+			var yang: bool = is_yang(enemy)
+			if yang and enemy.phase == 0 and update_yang_phase_one(enemy, delta):
+				continue
+			var ruoyu: bool = is_ruoyu(enemy)
+			if ruoyu and enemy.phase == 0 and enemy.hp <= enemy.max_hp * 0.5:
+				enemy.phase = 1
+				enemy.erase("speech_time")
+				enemy.windup = 0.0
+				enemy.charge = 0.0
+				enemy.guard_time = 0.0
+				enemy.attack_pose_time = 0.0
+				enemy.cooldown = 0.7
+				enemy.pounce_time = 0.0
+				enemy.pounce_recovery = 0.0
+				enemy.moves = enemy.moves + ["pounce"]
+				enemy.attack = enemy.moves.size() - 1
+				projectiles.clear()
+				ruoyu_unseal_time = 0.0
+				state = "ruoyu_unseal"
+				audio.sfx("skill")
+				return
+			if ruoyu and update_ruoyu_pounce(enemy, delta):
+				continue
+			if is_yamada(enemy) and enemy.phase == 0 and enemy.hp <= enemy.max_hp * 0.5:
+				if not enemy.has("split_time"):
+					enemy["split_time"] = Data.YAMADA_SPLIT_DURATION
+					enemy.windup = 0.0
+					enemy.charge = 0.0
+					enemy.moving = false
+					notify("山田开始蓄力分身！")
+					audio.sfx("skill")
+				enemy.split_time -= delta
+				if enemy.split_time <= 0.0:
+					split_yamada(enemy)
+				continue
 			if enemy.hp < enemy.max_hp * 0.5 and enemy.phase == 0:
 				enemy.phase = 1
 				notify(boss_name(enemy) + "进入狂暴阶段！")
 				enemy.cooldown = 0.1
 			speed = (82 + enemy.phase * 14 if enemy.kind == "shark" else (30 if enemy.kind == "brood" else 68 + floor_index * 8)) * (1.0 + cleared_count * 0.02)
-			if enemy.cooldown <= 0 and enemy.windup <= 0 and enemy.charge <= 0:
+			if ruoyu and enemy.phase > 0:
+				speed *= 1.18
+			if yang:
+				speed *= 1.16
+			if enemy.cooldown <= 0 and enemy.windup <= 0 and enemy.charge <= 0 and enemy.guard_time <= 0:
 				enemy.windup = 0.75 if enemy.phase == 0 else 0.6
 				enemy.aim = offset.normalized()
+				enemy["target"] = player
+				if ruoyu and next_enemy_move(enemy) == "pounce":
+					enemy.windup = 0.92
+					enemy.target = enemy.p + offset.limit_length(490.0)
+				elif yang and next_enemy_move(enemy) == "laser":
+					enemy.windup = 0.95
+					if enemy.aim.is_zero_approx():
+						enemy.aim = Vector2(enemy.facing, 0)
+					enemy.target = laser_endpoint(enemy.p, enemy.aim)
 			if enemy.windup > 0:
 				enemy.windup -= delta
 				speed = 0
 				if enemy.windup <= 0:
 					boss_attack(enemy)
 					enemy.cooldown = 1.55 if enemy.phase == 0 else 1.0
+					if ruoyu and enemy.pounce_time > 0.0:
+						continue
 					if enemy.charge_left > 0:
 						enemy.cooldown = 0.55
+			elif yang and enemy.phase > 0 and enemy.attack_pose_time > 0.0 and enemy.moves[posmod(enemy.attack - 1, enemy.moves.size())] == "laser":
+				speed = 0
+		elif not enemy.moves.is_empty():
+			var move: String = next_enemy_move(enemy)
+			if enemy.ranged:
+				speed = 0 if distance > 185 and distance < 320 else (speed if distance >= 320 else -speed * 0.7)
+			var reach: float = 118.0 if move == "slam" else (240.0 if move == "lunge" else 390.0)
+			if enemy.cooldown <= 0 and enemy.windup <= 0 and enemy.charge <= 0 and enemy.guard_time <= 0 and distance <= reach and line_clear(enemy.p, player):
+				enemy.windup = 0.38 if move == "lunge" else 0.65
+				enemy.aim = offset.normalized()
+				enemy["target"] = player
+			if enemy.windup > 0:
+				enemy.windup -= delta
+				speed = 0
+				if enemy.windup <= 0:
+					enemy.attack += 1
+					perform_enemy_move(enemy, move)
+					enemy.cooldown = 2.3 if enemy.ranged else 1.9
 		elif enemy.kind in ["ranged", "ropehead"]:
 			speed = 0 if distance > 185 and distance < 320 else (speed if distance >= 320 else -speed * 0.7)
 			if enemy.cooldown <= 0 and enemy.windup <= 0 and line_clear(enemy.p, player):
@@ -700,11 +924,11 @@ func update_enemies(delta: float) -> void:
 		speed *= slow
 		if enemy.charge > 0:
 			enemy.charge -= delta
-			var charge_speed: float = 470 if enemy.kind in ["dasher", "wolf"] else 340
+			var charge_speed: float = 470 if enemy.kind in ["dasher", "wolf", "cone_mimic"] else 340
 			if enemy.kind == "baola" or enemy.kind == "boss" and Data.FLOOR_STYLES[floor_index] in ["sumo", "wilds"]:
 				charge_speed = 460
 			enemy.p = slide(enemy.p, enemy.aim * charge_speed * (1.0 + cleared_count * 0.02) * slow * delta, enemy.radius)
-		elif speed != 0:
+		elif speed != 0 and enemy.guard_time <= 0.0:
 			var direction: Vector2 = offset.normalized()
 			if not line_clear(enemy.p, player) and speed > 0:
 				enemy.path_time -= delta
@@ -726,6 +950,7 @@ func update_enemies(delta: float) -> void:
 						separation += difference.normalized() * 20
 			enemy.p = slide(enemy.p, (direction * speed + separation) * delta, enemy.radius)
 		var facing_motion: Vector2 = enemy.p - previous_position
+		enemy.moving = facing_motion.length_squared() > 0.001
 		if facing_motion.length_squared() < 0.001 and enemy.windup > 0:
 			facing_motion = enemy.aim
 		if absf(facing_motion.x) > 0.01:
@@ -733,8 +958,185 @@ func update_enemies(delta: float) -> void:
 		if enemy.p.distance_to(player) < enemy.radius + 12:
 			hurt((12 if is_boss(enemy) else (3 if enemy.kind == "minislime" else 8)) * (1.0 + cleared_count * 0.04), enemy.p)
 
+func next_enemy_move(enemy: Dictionary) -> String:
+	if is_yang(enemy) and enemy.phase == 0:
+		return "decree"
+	return "" if enemy.moves.is_empty() else enemy.moves[enemy.attack % enemy.moves.size()]
+
+func split_yamada(enemy: Dictionary) -> void:
+	var clone_hp: float = enemy.hp / Data.YAMADA_CLONE_COUNT * 1.4
+	var bounds: Rect2 = current_room().rect.grow(-enemy.radius)
+	var tint: Color = Data.FLOOR_COLORS[floor_index]
+	enemy.dead = true
+	enemies.erase(enemy)
+	add_effect("burst", enemy.p, enemy.p, tint, 0.5, 260)
+	for i in range(Data.YAMADA_CLONE_COUNT):
+		var point: Vector2 = enemy.p + Vector2.from_angle(TAU * (i + 0.5) / Data.YAMADA_CLONE_COUNT) * 156.0
+		var near_player: bool = point.distance_to(player) < enemy.radius + 30.0
+		var crowded: bool = enemies.any(func(other: Dictionary) -> bool:
+			return point.distance_to(other.p) < enemy.radius + other.radius + 10.0
+		)
+		if near_player or crowded or not bounds.has_point(point) or not walkable(point, enemy.radius):
+			point = spawn_point(enemy.radius)
+		var clone: Dictionary = spawn_enemy(point, "boss")
+		clone["yamada_clone"] = true
+		clone.hp = clone_hp
+		clone.max_hp = clone_hp
+		clone.phase = 1
+		clone.attack = i % 3
+		clone.cooldown = 0.65 + i * 0.75
+		add_effect("burst", point, point, tint, 0.48, 124)
+	notify("山田一分为四 · 击败全部分身")
+
+func update_yang_phase_one(enemy: Dictionary, delta: float) -> bool:
+	if not enemy.escorts_summoned:
+		enemy.windup = maxf(0.0, enemy.windup - delta)
+		if enemy.windup == 0.0:
+			enemy.escorts_summoned = true
+			enemy.attack_pose_time = 0.45
+			for kind in ["lin_yu", "lin_yifeng", "chess_rook", "ink_scribe", "chess_rook"]:
+				spawn_enemy(spawn_point(), kind)
+			add_effect("burst", enemy.p, enemy.p, Color("ffb878"), 0.46, 150)
+			notify("护盾由林宇、林逸枫和小怪维持")
+		return true
+	if enemy.castle_shield:
+		if enemies.size() == 1:
+			enemy.castle_shield = false
+			enemy.castle_weak_time = Data.YANG_WEAK_DURATION
+			enemy.attack_pose_time = 0.0
+			add_effect("burst", enemy.p, enemy.p, Color("84cdf9"), 0.60, 170)
+			audio.sfx("skill")
+			notify("护盾已破 · 杨梓亮陷入虚弱")
+		return true
+	if enemy.hp <= enemy.max_hp * 0.5:
+		enemy.phase = 1
+		enemy.castle_weak_time = 0.0
+		enemy.windup = 0.0
+		enemy.attack_pose_time = 0.0
+		enemy.attack = 0
+		enemy.cooldown = 0.65
+		notify("杨梓亮 · 巅峰状态")
+		return false
+	if enemy.castle_weak_time > 0.0:
+		enemy.castle_weak_time = maxf(0.0, enemy.castle_weak_time - delta)
+		if enemy.castle_weak_time == 0.0:
+			enemy.cooldown = 0.35
+	return enemy.castle_weak_time > 0.0
+
+func update_ruoyu_pounce(enemy: Dictionary, delta: float) -> bool:
+	if enemy.pounce_time > 0.0:
+		var travel: Vector2 = (enemy.target - enemy.p) * minf(1.0, delta / enemy.pounce_time)
+		enemy.p = slide(enemy.p, travel, enemy.radius)
+		enemy.pounce_time = maxf(0.0, enemy.pounce_time - delta)
+		if enemy.pounce_time <= 0.0:
+			var radius: float = attack_radius(enemy, "pounce")
+			add_effect("dust", enemy.p, enemy.p, Color.WHITE, 0.50, radius * 2.0)
+			if player.distance_to(enemy.p) <= radius and line_clear(enemy.p, player):
+				hurt((22.0 + enemy.phase * 3.0) * (1.0 + minf(0.35, cleared_count * 0.025)), enemy.p)
+			enemy.pounce_recovery = Data.RUOYU_POUNCE_RECOVERY
+			boss_say(enemy, "哎呦")
+		return true
+	if enemy.pounce_recovery > 0.0:
+		enemy.pounce_recovery = maxf(0.0, enemy.pounce_recovery - delta)
+		if enemy.pounce_recovery <= 0.0:
+			enemy.cooldown = 0.35
+		return true
+	return false
+
+func attack_center(enemy: Dictionary, move: String) -> Vector2:
+	return enemy.get("target", player) if move in ["mark", "pull", "pounce"] else enemy.p
+
+func attack_radius(enemy: Dictionary, move: String) -> float:
+	match move:
+		"slam": return 150.0 if is_boss(enemy) else 122.0
+		"mark": return 94.0 if is_boss(enemy) else 57.0
+		"pull": return 112.0
+		"pounce": return 104.0 + enemy.phase * 12.0
+	return 0.0
+
+func laser_endpoint(origin: Vector2, aim: Vector2) -> Vector2:
+	var bounds: Rect2 = current_room().rect.grow(-8.0)
+	var end: Vector2 = origin
+	for distance in range(12, 1441, 12):
+		var point: Vector2 = origin + aim * distance
+		if not bounds.has_point(point) or not line_clear(origin, point):
+			break
+		end = point
+	return end
+
+func perform_enemy_move(enemy: Dictionary, move: String) -> void:
+	enemy.attack_pose_time = 0.30
+	var leader: bool = is_boss(enemy)
+	var tint: Color = Data.FLOOR_COLORS[floor_index]
+	var power: float = 13.0 + enemy.phase * 2 if leader else 7.0 + floor_index * 0.6
+	match move:
+		"lunge":
+			enemy.charge = 0.52 + enemy.phase * 0.08 if leader else (0.22 if enemy.kind == "wolf" else 0.33)
+			add_effect("dust", enemy.p, enemy.p, tint, 0.4, 92)
+		"pounce":
+			enemy["target"] = enemy.get("target", player)
+			enemy.attack_pose_time = 0.0
+			enemy.moving = false
+			enemy.pounce_time = Data.RUOYU_POUNCE_FLIGHT
+		"fan", "guard", "burst":
+			if move == "guard":
+				enemy.guard_time = 1.3 if leader else 0.9
+			var count: int = (9 + enemy.phase * 4 if leader else 3) if move != "burst" else (5 + enemy.phase * 2 if leader else 2)
+			if is_ruoyu(enemy) and move == "fan":
+				count += 4
+			var spread: float = 0.048 if move == "burst" else 0.17
+			for i in range(count):
+				var angle: float = (i - (count - 1) * 0.5) * spread
+				shoot(enemy.p, enemy.aim.rotated(angle) * (245 + i * 12 if move == "burst" else 225), power, false, tint, 0, 2.7)
+		"ring":
+			var count: int = 22 + enemy.phase * 8 if leader else 6
+			for i in range(count):
+				shoot(enemy.p, Vector2.from_angle(TAU * i / count + enemy.attack * 0.18) * 195, power, false, tint, 0, 3.0)
+		"cross":
+			var count: int = 5 + enemy.phase * 2 if leader else 1
+			for arm in range(4):
+				for i in range(count):
+					var angle: float = arm * PI / 2 + (i - (count - 1) * 0.5) * 0.09
+					shoot(enemy.p, Vector2.from_angle(angle) * 245, power, false, tint, 0, 2.8)
+		"decree":
+			for lane in range(-4 - enemy.phase, 5 + enemy.phase):
+				var origin: Vector2 = enemy.p + enemy.aim.orthogonal() * lane * 41
+				if walkable(origin, 3):
+					shoot(origin, enemy.aim * 265, power, false, tint, 0, 2.8)
+					shoot(origin, -enemy.aim * 215, power, false, tint, 0, 2.8)
+		"laser":
+			var end: Vector2 = enemy.target if enemy.has("target") else laser_endpoint(enemy.p, enemy.aim)
+			add_effect("yang_laser", enemy.p, end, Color("ff354f"), 0.30, 58)
+			effects.back()["facing"] = enemy.facing
+			if player.distance_to(Geometry2D.get_closest_point_to_segment(player, enemy.p, end)) <= 29.0 and line_clear(enemy.p, player):
+				hurt(20.0 * (1.0 + minf(cleared_count * 0.025, 0.5)), enemy.p)
+		"slam", "mark", "pull":
+			var point: Vector2 = attack_center(enemy, move)
+			var radius: float = attack_radius(enemy, move)
+			add_effect("burst", point, point, tint, 0.42, radius * 2)
+			if player.distance_to(point) <= radius and line_clear(point, player):
+				hurt(power * (1.0 + cleared_count * 0.04), point)
+				if move == "pull" and dash_time <= 0:
+					player = slide(player, player.direction_to(enemy.p) * minf(95, player.distance_to(enemy.p)), 12)
+		"summon":
+			var local_kinds: Array = Data.FLOOR_ENEMIES[floor_index]
+			for i in range(mini(2 + enemy.phase, 7 - enemies.size())):
+				spawn_enemy(spawn_point(), local_kinds[i % local_kinds.size()])
+			add_effect("burst", enemy.p, enemy.p, tint, 0.46, 150)
+
 func boss_attack(enemy: Dictionary) -> void:
+	if is_yang(enemy):
+		if enemy.castle_shield or enemy.castle_weak_time > 0.0:
+			return
+		if enemy.phase > 0:
+			boss_say(enemy, Data.YANG_PEAK_QUOTES[enemy.attack % Data.YANG_PEAK_QUOTES.size()])
+	var move: String = next_enemy_move(enemy)
+	if is_ruoyu(enemy) and move != "pounce":
+		boss_say(enemy, Data.RUOYU_QUOTES[enemy.attack % enemy.moves.size()])
 	enemy.attack += 1
+	if not move.is_empty():
+		perform_enemy_move(enemy, move)
+		return
 	if enemy.kind == "baola":
 		if enemy.charge_left <= 0:
 			enemy.charge_left = 2 + enemy.phase
@@ -775,42 +1177,6 @@ func boss_attack(enemy: Dictionary) -> void:
 		add_effect("burst", enemy.p, enemy.p, Color.WHITE, 0.4, 130)
 		return
 	match Data.FLOOR_STYLES[floor_index]:
-		"office":
-			# Alternate the fan angle while retaining dodgeable gaps between lanes.
-			for row in range(4):
-				for i in range(7 + enemy.phase * 2):
-					var angle: float = (i - (6 + enemy.phase * 2) * 0.5) * 0.16 + (0.1 if enemy.attack % 2 == 0 else -0.1)
-					shoot(enemy.p, enemy.aim.rotated(angle) * (205 + row * 55), 12, false, Color("77d9b4"), 0, 2.8)
-			if enemy.phase > 0 and enemy.attack % 3 == 0 and enemies.size() < 7:
-				for i in range(2):
-					spawn_enemy(spawn_point(), "dasher")
-		"workshop":
-			if enemy.charge_left <= 0:
-				enemy.charge_left = 2 + enemy.phase
-			enemy.charge_left -= 1
-			enemy.charge = 0.45
-			for side in [-1, 1]:
-				for i in range(12 + enemy.phase * 4):
-					shoot(enemy.p, enemy.aim.rotated(side * PI / 2 + (i - (11 + enemy.phase * 4) * 0.5) * 0.1) * 220, 14, false, Color("bd9eff"), 0, 2.6)
-			if enemy.attack % 3 == 0 and enemies.size() < 7:
-				spawn_enemy(spawn_point(), "charger")
-				spawn_enemy(spawn_point(), "ranged")
-		"server":
-			for arm in range(4):
-				for i in range(6 + enemy.phase * 3):
-					var angle: float = arm * PI / 2 + enemy.attack * 0.32 + (i - (5 + enemy.phase * 3) * 0.5) * 0.08
-					shoot(enemy.p, Vector2.from_angle(angle) * (215 + i * 14), 13, false, Color("63dfee"), 0, 2.8)
-			if enemy.attack % 3 == 0 and enemies.size() < 7:
-				for i in range(2):
-					spawn_enemy(spawn_point(), "ranged")
-		"garden":
-			for ring in range(2):
-				for i in range(16 + enemy.phase * 6):
-					var angle: float = TAU * i / (16 + enemy.phase * 6) + ring * 0.18 + enemy.attack * 0.21
-					shoot(enemy.p, Vector2.from_angle(angle) * (145 + ring * 75), 13, false, Color("afd889"), 0, 3.3)
-			if enemy.attack % 2 == 0 and enemies.size() < 7:
-				for i in range(2):
-					spawn_enemy(spawn_point(), "splitter")
 		"wilds":
 			if enemy.attack % 4 in [1, 2]:
 				enemy.charge_left = 1 if enemy.attack % 4 == 1 else 0
@@ -831,6 +1197,7 @@ func boss_attack(enemy: Dictionary) -> void:
 				for kind in ["wolf", "ropehead"]:
 					spawn_enemy(spawn_point(), kind)
 		"sumo":
+			enemy.attack_pose_time = 0.30
 			match enemy.attack % 3:
 				1:
 					enemy.charge = 0.62 + enemy.phase * 0.12
@@ -844,21 +1211,12 @@ func boss_attack(enemy: Dictionary) -> void:
 				0:
 					for i in range(24 + enemy.phase * 12):
 						shoot(enemy.p, Vector2.from_angle(TAU * i / (24 + enemy.phase * 12)) * 185, 16, false, Color("efbd76"), 0, 2.8)
+					perform_enemy_move(enemy, "slam")
 					add_effect("dust", enemy.p, enemy.p, Color.WHITE, 0.65, 260)
 			if enemy.phase > 0 and enemy.attack % 6 == 0 and enemies.size() < 7:
-				for i in range(2):
-					spawn_enemy(spawn_point(), "charger")
-		"castle":
-			var count: int = 32 + enemy.phase * 12
-			for i in range(count):
-				var direction: Vector2 = Vector2.from_angle(TAU * i / count + enemy.attack * 0.27)
-				shoot(enemy.p, direction * (180 + enemy.phase * 30), 16, false, Color("ffb178"), 0, 3.2)
-			for i in range(9 + enemy.phase * 2):
-				shoot(enemy.p, enemy.aim.rotated((i - (8 + enemy.phase * 2) * 0.5) * 0.09) * 300, 14, false, Color("ff8099"), 0, 2.6)
-			if enemy.attack % 2 == 0 and enemies.size() < 7:
-				for i in range(3 + enemy.phase):
-					spawn_enemy(spawn_point(), "charger" if i % 2 == 0 else "ranged")
-	add_effect("dust" if Data.FLOOR_STYLES[floor_index] in ["sumo", "wilds"] else "burst", enemy.p, enemy.p, Color.WHITE, 0.45, 150)
+				for kind in ["straw_brawler", "drum_yokai"]:
+					spawn_enemy(spawn_point(), kind)
+	add_effect("dust", enemy.p, enemy.p, Color.WHITE, 0.45, 150)
 
 func update_weapons(delta: float) -> void:
 	for weapon in weapons:
@@ -914,7 +1272,7 @@ func update_weapons(delta: float) -> void:
 					hit_enemy(chain, damage * pow(0.8, i), player)
 					chain = {}
 					for candidate in enemies:
-						if candidate not in struck and not candidate.dead and candidate.p.distance_to(origin) < 165 and line_clear(origin, candidate.p):
+						if candidate not in struck and not candidate.dead and not candidate.get("castle_shield", false) and candidate.p.distance_to(origin) < 165 and line_clear(origin, candidate.p):
 							chain = candidate
 			"shotgun":
 				for i in range(5):
@@ -1049,11 +1407,19 @@ func update_projectiles(delta: float) -> void:
 func hit_enemy(enemy: Dictionary, damage: float, source: Vector2, traits: Dictionary = {}) -> void:
 	if enemy.is_empty() or enemy.dead:
 		return
+	if enemy.get("castle_shield", false):
+		return
+	if is_ruoyu(enemy) and state == "ruoyu_unseal":
+		return
 	var critical: bool = rng.randf() < player_stat("crit_chance")
 	if critical:
 		damage *= player_stat("crit_damage")
 	if cheat_one_hit:
 		damage = enemy.max_hp + 1
+	elif (is_ruoyu(enemy) or is_yang(enemy) or is_yamada(enemy)) and enemy.phase == 0:
+		damage = minf(damage, maxf(0.0, enemy.hp - enemy.max_hp * 0.5))
+	elif enemy.guard_time > 0.0 and enemy.aim.dot(enemy.p.direction_to(source)) > 0.25:
+		damage *= 0.4
 	var dealt: float = minf(maxf(0, enemy.hp), damage)
 	enemy.hp -= damage
 	health = minf(max_health(), health + dealt * player_stat("lifesteal"))
@@ -1068,12 +1434,15 @@ func hit_enemy(enemy: Dictionary, damage: float, source: Vector2, traits: Dictio
 		enemy.p = slide(enemy.p, (enemy.p - source).normalized() * float(traits.get("knockback", 11.0)), enemy.radius)
 	if enemy.hp <= 0:
 		enemy.dead = true
+		add_effect("burst", enemy.p + Vector2(0, -16), enemy.p, Color.WHITE, 0.35, 75)
+		enemies.erase(enemy)
+		if enemy.get("yamada_clone", false) and enemies.any(func(other: Dictionary) -> bool: return other.get("yamada_clone", false)):
+			audio.sfx("kill")
+			return
 		kills += 1
 		audio.sfx("kill_boss" if is_boss(enemy) else "kill")
 		var reward: int = 60 if is_boss(enemy) else (1 if enemy.kind == "minislime" else (5 if enemy.kind in ["charger", "dasher"] else 3))
 		drops.append({"p":enemy.p, "value":reward, "age":0.0})
-		add_effect("burst", enemy.p + Vector2(0, -16), enemy.p, Color.WHITE, 0.35, 75)
-		enemies.erase(enemy)
 		if enemy.kind == "splitter":
 			for i in range(3):
 				var p: Vector2 = slide(enemy.p, Vector2.from_angle(TAU * i / 3) * 34, 10)
@@ -1135,6 +1504,7 @@ func clear_room() -> void:
 	room.cleared = true
 	spawn_remaining = 0
 	projectiles.clear()
+	turrets.clear()
 	collect_drops()
 	cleared_count += 1
 	gain_points(18 if room.type != "boss" else 60)
@@ -1150,7 +1520,7 @@ func clear_room() -> void:
 	elif room.type in ["combat", "elite"]:
 		room.reward_shop = true
 		open_shop()
-		notify("战后补给 · 仅此一批商品")
+		notify("战后补给 · 可刷新货架")
 	audio.sfx("repair")
 
 func max_health() -> float:
@@ -1431,7 +1801,7 @@ func refresh_price() -> int:
 	return 0 if current_room().refreshes == 0 else ceili((4 + (current_room().refreshes - 1) * 2) * price_scale())
 
 func refresh_shop() -> bool:
-	if state != "shop" or current_room().get("reward_shop", false):
+	if state != "shop":
 		return false
 	var price: int = refresh_price()
 	if points < price:
@@ -1454,6 +1824,7 @@ func interact() -> void:
 		return
 	if room.type == "npc" and room.npc >= 0 and player.distance_to(npc_position()) < 72:
 		selected_npc = room.npc
+		npc_reply = ""
 		state = "npc"
 		return
 	if not room.rect.has_point(player):
@@ -1533,7 +1904,6 @@ func accept_npc() -> bool:
 		notify("这次已经帮过你了，继续救公主吧")
 		return false
 	match spec.id:
-		"ruoyu": health = minf(max_health(), health + 35)
 		"rhode":
 			contract_pending = true
 			notify("委托已接受 · 下一间战斗房追加一波")
@@ -1551,7 +1921,7 @@ func accept_npc() -> bool:
 			room.npc = -1
 		"basan":
 			if points < 12:
-				notify("八桑：先凑够 12 字节再来")
+				npc_reply = "先凑够 12 字节再来"
 				return false
 			points -= 12
 			buff_damage += 0.12
@@ -1561,7 +1931,7 @@ func accept_npc() -> bool:
 				if can_add_item(spec_item.id):
 					candidates.append(spec_item)
 			if candidates.is_empty():
-				notify("菈雅：先在 Tab 背包里腾出一个位置吧")
+				npc_reply = "先在 Tab 背包里腾出一个位置吧"
 				return false
 			var gift: Dictionary = candidates[rng.randi_range(0, candidates.size() - 1)]
 			var inventory: Array[Dictionary] = weapons if gift.kind == "weapon" else equipment
@@ -1584,7 +1954,7 @@ func accept_npc() -> bool:
 					notify("嘉豪改装完成 · %s %s" % [Data.TIER_NAMES[weapon.tier - 1], Data.item(weapon.id).name])
 					break
 			if not upgraded:
-				notify("嘉豪：你的武器都已经是传说品质了")
+				npc_reply = "你的武器都已经是传说品质了"
 				return false
 	room.npc_used = true
 	state = "playing"
@@ -1595,16 +1965,24 @@ func accept_npc() -> bool:
 func next_floor() -> bool:
 	if state != "playing" or current_room().type != "boss" or not current_room().cleared or not current_room().skill_claimed or floor_index >= Data.FLOOR_COUNT - 1:
 		return false
-	collect_drops()
-	floor_index += 1
-	knight_active = false
-	health = minf(max_health(), health + 25)
-	state = "transition"
-	generate_floor()
+	load_next_floor()
 	dialogue_kind = "floor"
 	dialogue_index = 0
 	state = "dialogue"
 	return true
+
+func skip_floor() -> bool:
+	if state != "cheats" or floor_index >= Data.FLOOR_COUNT - 1:
+		return false
+	assisted = true
+	load_next_floor()
+	return true
+
+func load_next_floor() -> void:
+	collect_drops()
+	floor_index += 1
+	health = minf(max_health(), health + 25)
+	generate_floor()
 
 func advance_dialogue() -> void:
 	if state != "dialogue":
@@ -1660,6 +2038,10 @@ func notify(value: String) -> void:
 	message = value
 	message_time = 3.5
 
+func boss_say(enemy: Dictionary, value: String, duration: float = 2.5) -> void:
+	enemy["speech"] = value
+	enemy["speech_time"] = duration
+
 func add_effect(kind: String, a: Vector2, b: Vector2, color: Color, life: float, size: float) -> void:
 	effects.append({"kind":kind, "a":a, "b":b, "color":color, "life":life, "max_life":life, "size":size})
 
@@ -1669,7 +2051,6 @@ func toggle_inventory() -> void:
 		state = return_state
 	elif state in ["playing", "shop", "paused", "npc", "treasure"]:
 		return_state = state
-		view.overlay.inventory_tab = 0
 		state = "inventory"
 
 func start_sandbox() -> void:
@@ -1712,6 +2093,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		match state:
 			"playing": toggle_inventory()
 			"paused", "npc": state = "playing"
+			"confirm_title": state = "inventory"
 			"inventory", "guide", "map", "cheats": state = return_state
 			"shop": leave_shop()
 			"treasure": skip_treasure()
@@ -1722,6 +2104,8 @@ func _unhandled_input(event: InputEvent) -> void:
 					state = "playing"
 	elif state == "dialogue" and code in [KEY_ENTER, KEY_SPACE, KEY_E]:
 		advance_dialogue()
+	elif code == KEY_F and state == "playing":
+		deploy_turret()
 	elif state == "title":
 		if code == KEY_ENTER:
 			start_run()
@@ -1746,8 +2130,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		choose_treasure(code - KEY_1)
 	elif state == "npc" and code in [KEY_ENTER, KEY_E]:
 		accept_npc()
-	elif state == "cheats" and code in [KEY_1, KEY_2]:
-		toggle_cheat(code - KEY_1)
+	elif state == "cheats":
+		if code in [KEY_1, KEY_2]:
+			toggle_cheat(code - KEY_1)
+		elif code == KEY_3:
+			skip_floor()
 
 func toggle_cheat(index: int) -> void:
 	if state != "cheats":

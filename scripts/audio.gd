@@ -13,9 +13,9 @@ const RATE: int = 22050
 const MUSIC_VOLUME: float = -25.0
 const FLOOR_MUSIC: Dictionary = {
 	"office": preload("res://assets/audio/music/office.ogg"),
-	"workshop": preload("res://assets/audio/music/workshop.ogg"),
+	"zhangjiang": preload("res://assets/audio/music/workshop.ogg"),
 	"server": preload("res://assets/audio/music/server.ogg"),
-	"garden": preload("res://assets/audio/music/garden.ogg"),
+	"dark_home": preload("res://assets/audio/music/garden.ogg"),
 	"wilds": preload("res://assets/audio/music/wilds.ogg"),
 	"sumo": preload("res://assets/audio/music/sumo.ogg"),
 	"castle": preload("res://assets/audio/music/castle.ogg")

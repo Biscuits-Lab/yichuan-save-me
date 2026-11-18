@@ -7,18 +7,25 @@ var row_heights: Array[float] = []
 var columns: int
 var rows: int
 
-func _init(source: Texture2D, cols: int, row_count: int, align_head: bool = false) -> void:
+func _init(source: Texture2D, cols: int, row_count: int, align_head: bool = false, custom_cells: Dictionary = {}, cutout_cells: Array = []) -> void:
 	texture = source
 	columns = cols
 	rows = row_count
 	var image: Image = texture.get_image()
-	var cell := Vector2i(image.get_width() / cols, image.get_height() / row_count)
-	# Runtime atlas slicing: ignore low-alpha glow when finding the body bounds.
-	# Every frame retains the source pixels; no generated image is rewritten.
+	var cell_size := Vector2i(image.get_width() / cols, image.get_height() / row_count)
+	if not cutout_cells.is_empty():
+		var cutouts: Array[Rect2i] = []
+		for index in cutout_cells:
+			cutouts.append(custom_cells.get(index, Rect2i(Vector2i(index % cols, index / cols) * cell_size, cell_size)))
+		remove_matte(image, cutouts)
+		texture = ImageTexture.create_from_image(image)
+	# Ignore low-alpha glow when finding the body bounds.
 	for row in range(row_count):
 		var heights: Array[float] = []
 		for col in range(cols):
-			var offset := Vector2i(col * cell.x, row * cell.y)
+			var rect: Rect2i = custom_cells.get(row * cols + col, Rect2i(Vector2i(col, row) * cell_size, cell_size))
+			var offset: Vector2i = rect.position
+			var cell: Vector2i = rect.size
 			var min_p := cell
 			var max_p := Vector2i.ZERO
 			var head_x: float = cell.x * 0.5
@@ -64,6 +71,22 @@ func _init(source: Texture2D, cols: int, row_count: int, align_head: bool = fals
 			ys.sort()
 			for frame in frames:
 				frame.anchor = Vector2(xs[xs.size() / 2], ys[ys.size() / 2])
+
+func remove_matte(image: Image, rects: Array[Rect2i]) -> void:
+	image.clear_mipmaps()
+	image.convert(Image.FORMAT_RGBA8)
+	var pixels: PackedByteArray = image.get_data()
+	var row_stride: int = image.get_width() * 4
+	var alpha_curve := PackedByteArray()
+	alpha_curve.resize(256)
+	for value in range(256):
+		alpha_curve[value] = clampi((value - 210) * 255 / 30, 0, 255)
+	for rect in rects:
+		for y in range(rect.position.y, rect.end.y):
+			var first: int = y * row_stride + rect.position.x * 4 + 3
+			for i in range(first, first + rect.size.x * 4, 4):
+				pixels[i] = alpha_curve[pixels[i]]
+	image.set_data(image.get_width(), image.get_height(), false, Image.FORMAT_RGBA8, pixels)
 
 func draw(canvas: CanvasItem, index: int, point: Vector2, height: float, facing: float = 1, tint: Color = Color.WHITE, center_anchor: bool = false) -> void:
 	if frames.is_empty():

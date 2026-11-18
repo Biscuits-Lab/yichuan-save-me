@@ -28,6 +28,69 @@ func safe_start(seed_number: int = 12345) -> void:
 	game.current_room().cleared = true
 	game.invulnerable = 100
 
+func npc_index(id: String) -> int:
+	return game.Data.NPCS.map(func(spec: Dictionary) -> String: return spec.id).find(id)
+
+func redraw_overlay() -> void:
+	game.view.overlay.queue_redraw()
+	await process_frame
+	await process_frame
+
+func test_inventory_screen() -> void:
+	safe_start()
+	game.toggle_inventory()
+	await redraw_overlay()
+	var overlay: Node = game.view.overlay
+	check(overlay.item_slots.size() == 1 and overlay.item_slots[0].kind == "weapon", "An empty equipment grid registers only the carried weapon")
+	check(overlay.STAT_ICONS.size() == game.Data.STAT_NAMES.size() and overlay.STAT_ICONS.values().all(func(id: String) -> bool: return game.item_icons.has(id) or id in game.Data.ITEM_ICONS), "Every character stat has an available icon")
+	game.add_item("medkit")
+	game.add_item("medkit")
+	game.add_item("coffee")
+	await redraw_overlay()
+	check(overlay.item_slots.filter(func(slot: Dictionary) -> bool: return slot.kind == "equipment").size() == 2, "Equipment draws one cell per occupied stack")
+	game.view.click(Vector2(680, 648))
+	check(game.state == "playing", "The lower button returns from the inventory to the game")
+	game.toggle_inventory()
+	await redraw_overlay()
+	game.view.click(Vector2(1168, 42))
+	await redraw_overlay()
+	check(game.state == "confirm_title" and overlay.item_slots.is_empty(), "Return to title first opens a modal and blocks item controls")
+	game.view.click(Vector2(1168, 42))
+	check(game.state == "confirm_title", "Clicking the original return button again cannot confirm")
+	key(KEY_ESCAPE)
+	check(game.state == "inventory" and game.equipment_count() == 3, "Escape dismisses the modal without losing the run")
+	await redraw_overlay()
+	game.view.click(Vector2(1168, 42))
+	await redraw_overlay()
+	game.view.click(Vector2(752, 405))
+	check(game.state == "title", "The distinct confirm button returns to the title")
+	print("Fullscreen inventory and title confirmation checks complete")
+
+func test_skip_floor() -> void:
+	safe_start()
+	var battle: Dictionary = game.rooms.filter(func(room: Dictionary) -> bool: return room.type == "combat")[0]
+	game.enter_room(battle.id)
+	var balance: int = game.points
+	key(KEY_3)
+	check(game.floor_index == 0 and not game.enemies.is_empty(), "Floor skip is unavailable during regular play")
+	key(KEY_HOME)
+	key(KEY_3)
+	check(game.state == "playing" and game.floor_index == 1 and game.assisted, "Home then 3 skips directly to an assisted next floor")
+	check(game.current_room().type == "start" and game.player == game.room_center() and game.enemies.is_empty(), "A skip resets combat and spawns at the next entrance")
+	check(game.points == balance and game.cleared_count == 0 and game.skill_levels.is_empty() and game.weapons.size() == 1, "Skipping preserves equipment without granting a clear or boss reward")
+	game.floor_index = game.Data.FLOOR_COUNT - 2
+	game.generate_floor()
+	game.state = "paused"
+	key(KEY_HOME)
+	await redraw_overlay()
+	game.view.click(Vector2(640, 409))
+	check(game.floor_index == game.Data.FLOOR_COUNT - 1 and game.state == "playing", "The mouse can skip from pause to the final floor entrance")
+	key(KEY_HOME)
+	await redraw_overlay()
+	key(KEY_3)
+	check(game.state == "cheats" and game.floor_index == game.Data.FLOOR_COUNT - 1 and game.view.overlay.buttons.all(func(entry: Dictionary) -> bool: return entry.action != "skip_floor"), "The final floor disables both mouse and keyboard skip")
+	print("Cheat floor skip checks complete")
+
 func finish_encounter() -> void:
 	game.invulnerable = 999
 	var guard: int = 0
@@ -39,14 +102,19 @@ func finish_encounter() -> void:
 
 func test_generation() -> void:
 	var layouts: Dictionary = {}
-	var service_cases: Dictionary = {}
-	for seed_number in range(1, 61):
+	var service_counts: Dictionary = {"rest":0, "npc":0}
+	var main_room_counts: Dictionary = {"rest":0, "npc":0}
+	var double_counts := PackedInt32Array()
+	double_counts.resize(game.Data.FLOOR_COUNT)
+	var room_counts: Array[int] = [9, 10, 11, 11, 11, 12, 12]
+	var seed_count: int = 60
+	for seed_number in range(1, seed_count + 1):
 		for floor_number in range(game.Data.FLOOR_COUNT):
 			var generated: Dictionary = game.Data.generate(seed_number, floor_number)
 			var repeat: Dictionary = game.Data.generate(seed_number, floor_number)
 			check(generated == repeat, "Seeded graph and encounters reproduce exactly")
 			var rooms: Array = generated.rooms
-			check(rooms.size() == 10 + floor_number, "Floor has its specified room count")
+			check(rooms.size() == room_counts[floor_number], "Floor has its specified room count")
 			var queue: Array[int] = [0]
 			var seen: Dictionary = {0:true}
 			var kinds: Dictionary = {}
@@ -64,6 +132,12 @@ func test_generation() -> void:
 						queue.append(link)
 			for room in rooms:
 				kinds[room.type] = int(kinds.get(room.type, 0)) + 1
+				if service_counts.has(room.type):
+					service_counts[room.type] += 1
+				if room.main_route and main_room_counts.has(room.type):
+					main_room_counts[room.type] += 1
+				if room.type == "combat" and room.encounter == "double":
+					double_counts[floor_number] += 1
 				if room.npc >= 0:
 					npc_ids[room.npc] = true
 			check(seen.size() == rooms.size() and links_valid, "Every room is reachable through reciprocal cardinal doors")
@@ -78,15 +152,13 @@ func test_generation() -> void:
 			for room in rooms:
 				if not room.main_route:
 					short_branches = short_branches and room.links.filter(func(id: int) -> bool: return id >= 0).size() == 1 and rooms[room.parent].main_route
-				if room.type in ["rest", "treasure", "npc", "shop"]:
-					short_branches = short_branches and not room.main_route
-			check(short_branches and rooms[generated.boss].main_route and generated.boss == main.size() - 1, "Service rooms occupy one-room branches and the boss terminates the main route")
-			check(kinds.get("boss", 0) == 1 and kinds.get("rest", 0) == 1 and kinds.get("treasure", 0) == 1 and kinds.get("elite", 0) == 1, "Boss, rest, treasure and elite rooms each exist exactly once")
+			check(short_branches and rooms[generated.boss].main_route and generated.boss == main.size() - 1, "Branches are one room long and the boss terminates the main route")
+			check(kinds.get("boss", 0) == 1 and kinds.get("elite", 0) == 1, "Boss and elite rooms each exist exactly once")
+			check(not kinds.has("treasure") and not kinds.has("shop"), "Treasure rooms and dedicated shops never generate")
 			check(rooms[generated.boss].type == "boss" and generated.boss != 0, "Boss never replaces entrance")
-			var services: int = kinds.get("npc", 0) + kinds.get("shop", 0)
-			check(services >= 0 and services <= 1 and npc_ids.size() == kinds.get("npc", 0), "NPC and shop rooms share a strict zero-or-one budget per floor")
-			service_cases["npc" if kinds.get("npc", 0) > 0 else ("shop" if kinds.get("shop", 0) > 0 else "none")] = true
-			check(kinds.get("combat", 0) + kinds.get("elite", 0) + kinds.get("boss", 0) >= rooms.size() - 4, "At least sixty percent of floor rooms contain combat")
+			var services: int = kinds.get("rest", 0) + kinds.get("npc", 0)
+			check(services == 1 and npc_ids.size() == kinds.get("npc", 0), "Exactly one rest or NPC room is generated per floor")
+			check(kinds.get("combat", 0) + kinds.get("elite", 0) + kinds.get("boss", 0) == rooms.size() - 2, "Only the start and shared service room are non-combat")
 			var sizes: Dictionary = {}
 			var safe_npcs: bool = true
 			var compact_npcs: bool = true
@@ -114,8 +186,20 @@ func test_generation() -> void:
 			check(connected and generated.corridors.size() >= rooms.size() - 1, "Real corridors physically join both room footprints")
 			layouts[str(rooms.map(func(room: Dictionary) -> Vector2i: return room.cell))] = true
 	check(layouts.size() > 20, "Seeds create varied branching floor layouts")
-	check(service_cases.size() == 3, "Seeds can produce no service, one NPC or one shop without forcing an encounter")
-	print("Generation checks complete")
+	var floor_samples: int = seed_count * game.Data.FLOOR_COUNT
+	for kind in service_counts:
+		var rate: float = float(service_counts[kind]) / floor_samples
+		check(absf(rate - 0.5) < 0.07, "%s appears on about half of floors" % kind)
+	for kind in main_room_counts:
+		var total: int = service_counts.get(kind, floor_samples)
+		check(total > 0 and absf(float(main_room_counts[kind]) / total - 0.30) < 0.12, "%s can appear on the main route or a branch" % kind)
+	var double_percentages: Array[float] = []
+	for floor_number in range(game.Data.FLOOR_COUNT):
+		var rate: float = float(double_counts[floor_number]) / (seed_count * (room_counts[floor_number] - 4))
+		check(absf(rate - (0.10 if floor_number < 2 else 1.0 / 3.0)) < 0.07, "Double waves have the expected frequency on floor %d" % (floor_number + 1))
+		double_percentages.append(snappedf(rate * 100, 0.1))
+	print("Generation checks complete (%d floors): %s" % [floor_samples, service_counts])
+	print("Main route placements: %s. Double-wave percentages by floor: %s" % [main_room_counts, double_percentages])
 
 func test_motion_and_rooms() -> void:
 	safe_start()
@@ -201,6 +285,8 @@ func test_continuous_traversal() -> void:
 			break
 	var action: String = ["move_up", "move_right", "move_down", "move_left"][direction]
 	var start: Vector2 = game.player
+	var destination: Dictionary = game.rooms[next_id]
+	var entry: Vector2 = destination.doors[(direction + 2) % 4].move_toward(destination.center, 48)
 	var camera_start: Vector2 = game.camera.position
 	var max_jump: float = 0
 	var walked_hall: bool = false
@@ -217,8 +303,8 @@ func test_continuous_traversal() -> void:
 			break
 	Input.action_release(action)
 	check(walked_hall and game.room_id == next_id, "Held movement physically crosses a corridor into the next room")
-	check(max_jump < 5 and game.player.distance_to(start) > 800, "Cross-room movement is continuous without any teleport frame")
-	check(game.camera.position.distance_to(camera_start) > 700 and game.camera.position.distance_to(game.player) < 45, "Camera follows actual long-distance player movement")
+	check(max_jump < 5 and game.player.distance_to(entry) < 5, "Cross-room movement reaches the destination doorway without any teleport frame")
+	check(game.camera.position.distance_to(camera_start) > start.distance_to(entry) - 45 and game.camera.position.distance_to(game.player) < 45, "Camera follows actual long-distance player movement")
 	var room: Dictionary = game.current_room()
 	if room.type in ["combat", "elite", "boss"]:
 		check(room.started and not room.cleared and game.enemies.size() > 0, "Entering a combat room starts its encounter and seals exits")
@@ -275,7 +361,7 @@ func test_floor_geometry_and_restart() -> void:
 	print("Floor geometry and restart checks complete")
 
 func test_compact_room_population() -> void:
-	var normal_counts: Array = [[12, 16], [16, 20], [20, 24], [24, 28], [28, 32], [32, 36], [36, 40]]
+	var normal_counts: Array = [[9, 12], [11, 14], [13, 16], [15, 18], [17, 20], [19, 22], [21, 24]]
 	for seed_number in [7, 51, 20261113]:
 		for floor_number in range(game.Data.FLOOR_COUNT):
 			safe_start(seed_number)
@@ -294,6 +380,7 @@ func test_compact_room_population() -> void:
 						game.spawn_wave()
 					var expected: int = normal_counts[floor_number][wave_index] + (4 if room.type == "elite" else 0)
 					check(game.enemies.size() + game.spawn_remaining == expected, "Room population increases by floor and preserves any queued reinforcements")
+					check(game.enemies.size() <= 16 + floor_number * 2, "Wave spawns stay within the active enemy cap")
 					var safe: bool = true
 					var separated: bool = true
 					var reachable: bool = true
@@ -304,10 +391,10 @@ func test_compact_room_population() -> void:
 						for other in game.enemies:
 							if other != enemy:
 								separated = separated and enemy.p.distance_to(other.p) >= enemy.radius + other.radius
-					check(safe, "Dense wave spawns remain inside clear floor space away from the player")
-					check(separated, "Dense waves do not begin with overlapping enemy bodies")
-					check(reachable, "Every enemy in the denser small-room waves can navigate to the player")
-	print("Compact rooms and denser waves checks complete")
+					check(safe, "Wave spawns remain inside clear floor space away from the player")
+					check(separated, "Waves do not begin with overlapping enemy bodies")
+					check(reachable, "Every spawned enemy can navigate to the player")
+	print("Compact rooms and wave population checks complete")
 
 func test_exploration_minimap() -> void:
 	for seed_number in [7, 51, 20261113]:
@@ -428,8 +515,11 @@ func test_combat() -> void:
 		game.floor_index = floor_number
 		game.enemies.clear()
 		boss = game.spawn_enemy(Vector2(700, 404), "boss")
+		if game.is_yang(boss):
+			boss.phase = 1
+			boss.castle_shield = false
 		game.boss_attack(boss)
-		check(game.projectiles.size() > 10, "Each floor boss has a real multi-projectile attack")
+		check(game.projectiles.size() >= 5, "Each floor boss has a real opening volley")
 		game.projectiles.clear()
 	print("Combat checks complete")
 
@@ -550,35 +640,25 @@ func test_full_inventory_auto_merge() -> void:
 	check(game.add_item("heart") and game.equipment_count() == 7 and is_equal_approx(game.max_health(), 66) and is_equal_approx(game.health, 66), "Different equipment qualities retain all additive bonuses and pickup healing")
 	safe_start()
 	game.weapons.clear()
-	for spec in game.Data.WEAPONS:
-		game.add_item(spec.id, 2)
-	game.current_room().type = "treasure"
-	game.player = game.room_center()
-	game.interact()
-	check(game.state == "treasure" and not game.current_room().used and game.weapons.size() == 6, "Opening a chest previews cards without equipping a reward")
-	game.choose_treasure(0)
-	check(game.current_room().used and game.weapons.size() == 6 and game.weapons[-1].tier == 3, "Full weapon slots receive and auto-fuse a real treasure-room reward")
-	check(game.message.begins_with("自动合并"), "Treasure reward preserves the automatic fusion message")
-	safe_start()
-	game.weapons.clear()
 	for i in range(6):
 		game.add_item("pistol")
-	game.current_room().type = "shop"
-	game.open_shop()
+	game.current_room().type = "combat"
+	game.current_room().cleared = false
+	game.clear_room()
 	game.points = 100
 	game.stock[0] = {"id":"pistol", "tier":1, "sold":false}
 	var price: int = game.shop_price(game.stock[0])
 	key(KEY_1)
-	check(game.stock[0].sold and game.points == 100 - price and game.weapons.size() == 6 and game.weapons[-1].tier == 2, "Shop purchase keys pay once and auto-fuse matching stock into full slots")
-	check(game.message.begins_with("自动合并"), "Shop keeps the automatic fusion result visible")
+	check(game.stock[0].sold and game.points == 100 - price and game.weapons.size() == 6 and game.weapons[-1].tier == 2, "Battle supply purchase keys pay once and auto-fuse matching stock into full slots")
+	check(game.message.begins_with("自动合并"), "Battle supplies keep the automatic fusion result visible")
 	safe_start()
 	game.weapons.clear()
 	for i in range(6):
 		game.add_item("pistol", 4)
 		game.add_item("vest", 4)
 	game.current_room().type = "npc"
-	game.current_room().npc = 4
-	game.selected_npc = 4
+	game.current_room().npc = npc_index("laya")
+	game.selected_npc = game.current_room().npc
 	game.state = "npc"
 	check(game.accept_npc() and game.current_room().npc_used and game.weapons.size() == 6 and game.equipment_count() == 7, "Laya can always give equipment when all weapon slots are legendary")
 	print("Full inventory auto-fusion checks complete")
@@ -599,6 +679,59 @@ func test_equipment_stacks() -> void:
 	check(game.fuse("equipment", 0) and game.equipment[0].count == 5 and game.equipment[1].count == 9 and game.equipment_count() == game.Data.EQUIPMENT.size() * 32 - 2, "Manual fusion consumes two stacked copies and stacks the upgraded result")
 	check(not game.can_add_item("vest", 5) and not game.add_item("missing"), "Unlimited equipment still validates item identity and tier")
 	print("Unlimited equipment checks complete")
+
+func test_deployable_equipment() -> void:
+	safe_start()
+	var room: Dictionary = game.current_room()
+	var origin: Vector2 = room.center
+	room.type = "combat"
+	room.rect = Rect2(origin - Vector2(390, 245), Vector2(780, 490))
+	room.cleared = false
+	game.obstacles.clear()
+	check(not game.deploy_turret(), "F requires a carried deployable")
+	game.add_item("p0_alarm", 1)
+	game.add_item("p0_alarm", 4)
+	game.add_item("focus_lamp", 3)
+	key(KEY_F)
+	check(game.turrets.size() == 1 and game.turrets[0].p == origin and is_equal_approx(game.turrets[0].quality, 1.26), "F deploys the highest owned quality at the player's feet")
+	var left: Dictionary = game.spawn_enemy(origin + Vector2(-95, 0))
+	var right: Dictionary = game.spawn_enemy(origin + Vector2(95, 0))
+	var behind_cover: Dictionary = game.spawn_enemy(origin + Vector2(70, 80))
+	for enemy in [left, right, behind_cover]:
+		enemy.hp = 100.0
+		enemy.age = 2.0
+	game.obstacles.append(Rect2(origin + Vector2(24, 28), Vector2(42, 37)))
+	game.update_turrets(0.05)
+	check(left.hp < 100.0 and right.hp < 100.0 and behind_cover.hp == 100.0, "P0 pulses against multiple targets without going through cover")
+	game.enemies.clear()
+	game.obstacles.clear()
+	game.player = origin + Vector2(0, 110)
+	key(KEY_F)
+	key(KEY_F)
+	check(game.turrets.size() == 2 and game.turrets[0].p == origin and game.turrets[1].p == game.player, "Each type deploys once per cooldown and remains stationary")
+	var near: Dictionary = game.spawn_enemy(game.player + Vector2(210, 0))
+	var far: Dictionary = game.spawn_enemy(game.player - Vector2(250, 0))
+	for enemy in [near, far]:
+		enemy.hp = 100.0
+		enemy.age = 2.0
+	game.update_turrets(0.05)
+	check(near.hp < 100.0 and far.hp == 100.0, "The lamp beams only the nearest visible target across the room")
+	var time_left: float = game.turret_cooldown("focus_lamp")
+	var life_left: float = game.turrets[1].life
+	game.toggle_inventory()
+	step(60)
+	check(game.turret_cooldown("focus_lamp") == time_left and game.turrets[1].life == life_left, "Inventory pauses turret duration and cooldown")
+	game.toggle_inventory()
+	game.update_turrets(8.1)
+	check(game.turrets.is_empty() and not game.deploy_turret(), "Expired turrets disappear while their cooldowns continue")
+	game.run_time += 15.0
+	check(game.deploy_turret(), "F deploys again when ready")
+	game.enemies.clear()
+	game.clear_room()
+	check(game.turrets.is_empty() and not game.deploy_turret(), "Clearing combat removes the deployables")
+	safe_start()
+	check(game.turrets.is_empty() and game.turret_cooldown("p0_alarm") == 0.0, "Restart resets deployed devices and cooldowns")
+	print("Deployable equipment checks complete")
 
 func test_room_progression() -> void:
 	for level in range(3):
@@ -643,19 +776,56 @@ func test_room_progression() -> void:
 	print("Room progression checks complete")
 
 func test_enemy_variety() -> void:
+	var seen_kinds: Dictionary = {}
+	for floor_number in range(game.Data.FLOOR_COUNT):
+		safe_start()
+		game.floor_index = floor_number
+		game.generate_floor()
+		var roster: Array = game.Data.FLOOR_ENEMIES[floor_number]
+		var elite: String = game.Data.FLOOR_ELITES[floor_number]
+		check(game.rooms.any(func(room: Dictionary) -> bool: return room.type == "elite" and room.elite_kind == elite), "Generated elite matches its floor theme")
+		var battle: Dictionary = game.rooms.filter(func(room: Dictionary) -> bool: return room.type == "combat")[0]
+		battle.encounter = "single"
+		game.enter_room(battle.id)
+		var local: Dictionary = {}
+		for enemy in game.enemies:
+			local[enemy.kind] = true
+		check(local.size() >= 2 and local.keys().all(func(kind: String) -> bool: return kind in roster), "Actual waves contain only the local roster")
+		for kind in local.keys() + [elite]:
+			check(not seen_kinds.has(kind), "Enemy cast never repeats between floors: " + kind)
+			seen_kinds[kind] = true
+		if floor_number == 4:
+			continue
+		game.obstacles.clear()
+		for kind in roster + [elite]:
+			game.enemies.clear()
+			var enemy: Dictionary = game.spawn_enemy(game.room_center(), kind)
+			enemy.age = 2.0
+			var moves: Dictionary = {}
+			for i in range(enemy.moves.size()):
+				game.enemies.assign([enemy])
+				game.effects.clear()
+				game.projectiles.clear()
+				enemy.p = game.room_center()
+				game.player = game.room_center() + Vector2(90, 0)
+				enemy.charge = 0.0
+				enemy.guard_time = 0.0
+				enemy.cooldown = 0.0
+				game.update_enemies(0.01)
+				check(enemy.windup > 0 and game.projectiles.is_empty(), "Each themed enemy move warns before execution")
+				if floor_number == 0:
+					check(game.view.enemy_action_frame(enemy) == enemy.art * 8 + 2 + i * 2, "The street monster draws the current attack's windup frame")
+				game.update_enemies(0.78)
+				if floor_number == 0:
+					check(game.view.enemy_action_frame(enemy) == enemy.art * 8 + 3 + i * 2, "The street monster draws the current attack's release frame")
+				moves[attack_signature(enemy)] = true
+			check(enemy.art >= 0 and moves.size() >= 2, "Each themed enemy has its own sprite and at least two actual moves: " + kind)
 	safe_start()
 	game.current_room().type = "combat"
-	game.current_room().encounter = "single"
 	game.current_room().rect = game.Data.ARENA
 	game.current_room().cleared = false
-	game.weapons.clear()
-	game.wave = 0
+	game.wave = 1
 	game.wave_total = 1
-	game.spawn_wave()
-	var kinds: Dictionary = {}
-	for enemy in game.enemies:
-		kinds[enemy.kind] = true
-	check(kinds.size() == 5 and kinds.has("splitter") and kinds.has("dasher"), "Normal waves contain all five distinct enemy behaviors")
 	game.enemies.clear()
 	game.spawn_remaining = 0
 	game.player = Vector2(850, 380)
@@ -682,25 +852,83 @@ func test_enemy_variety() -> void:
 	check(game.current_room().cleared and game.state == "shop", "Defeating all split children completes the room normally")
 	print("Enemy variety checks complete")
 
-func test_dense_boss_barrages() -> void:
-	var previous_counts: Array = [[15, 21], [16, 20], [16, 24], [20, 28], [12, 12], [12, 12], [25, 33]]
+func attack_signature(enemy: Dictionary) -> String:
+	return str([game.projectiles.map(func(shot: Dictionary) -> Vector2: return shot.velocity), enemy.charge > 0, enemy.guard_time > 0, game.enemies.size(), game.effects.map(func(effect: Dictionary) -> float: return effect.size)])
+
+func test_themed_mechanics() -> void:
+	safe_start()
+	game.obstacles.clear()
+	var origin: Vector2 = game.room_center()
+	game.player = origin + Vector2(180, 0)
+	var drone: Dictionary = game.spawn_enemy(origin, "patrol_drone")
+	drone.age = 2.0
+	drone.attack = 1
+	drone.cooldown = 0.0
+	game.update_enemies(0.01)
+	var marked: Vector2 = drone.target
+	game.player += Vector2(0, 100)
+	game.invulnerable = 0
+	game.update_enemies(0.68)
+	check(drone.target == marked and game.health == game.max_health(), "Moving out of the locked warning circle avoids mark damage")
+	drone.attack = 1
+	drone.cooldown = 0.0
+	game.update_enemies(0.01)
+	game.update_enemies(0.68)
+	check(game.health < game.max_health(), "Standing in the locked warning circle takes the attack")
+	safe_start()
+	game.obstacles.clear()
+	game.player = origin + Vector2(180, 0)
+	var barrier: Dictionary = game.spawn_enemy(origin, "barrier_bot")
+	barrier["target"] = game.player
+	game.perform_enemy_move(barrier, "pull")
+	check(game.player.distance_to(origin) < 100, "The barrier robot pulls a target within the warned area")
+	game.perform_enemy_move(barrier, "guard")
+	var health: float = barrier.hp
+	game.rng.seed = 151
+	game.hit_enemy(barrier, 10, origin + Vector2(70, 0))
+	var front_damage: float = health - barrier.hp
+	health = barrier.hp
+	game.rng.seed = 151
+	game.hit_enemy(barrier, 10, origin - Vector2(70, 0))
+	check(is_equal_approx(front_damage, (health - barrier.hp) * 0.4), "A shield blocks damage only from its warned facing")
+	print("Targeted attacks, magnetic pull and directional guard checks complete")
+
+func test_boss_move_cycles() -> void:
 	for floor_number in range(game.Data.FLOOR_COUNT):
-		for phase in range(2):
+		var first_attacking_phase: int = 1 if game.Data.FLOOR_STYLES[floor_number] == "castle" else 0
+		for phase in range(first_attacking_phase, 2):
 			safe_start()
 			game.floor_index = floor_number
 			var boss: Dictionary = game.spawn_enemy(game.room_center(), "boss")
 			boss.phase = phase
-			for move in range(4):
+			if game.is_yang(boss):
+				boss.castle_shield = false
+				boss.windup = 0.0
+			var signatures: Dictionary = {}
+			var cycle_size: int = boss.moves.size() if not boss.moves.is_empty() else (4 if floor_number == 4 else 3)
+			for move in range(cycle_size):
+				game.enemies.assign([boss])
+				game.effects.clear()
 				game.projectiles.clear()
+				boss.charge = 0
+				boss.guard_time = 0
+				if floor_number == 0:
+					boss.windup = 0.5
+					check(game.view.enemy_action_frame(boss) == 2 + move * 2, "The guard uses a unique prep frame for each move")
+					boss.windup = 0.0
+				elif game.is_yamada(boss):
+					boss.windup = 0.5
+					check(game.view.yamada_action_frame(boss) == 2 + move * 2, "Yamada uses a unique prep frame for each move")
+					boss.windup = 0.0
 				game.boss_attack(boss)
-				var previous: int = previous_counts[floor_number][phase]
-				if floor_number == 4:
-					previous = ([12, 12, 18, 21] if phase == 0 else [12, 12, 24, 21])[move]
-				elif floor_number == 5:
-					previous = ([12, 15, 16, 12] if phase == 0 else [12, 20, 24, 12])[move]
-				check(game.projectiles.size() >= ceili(previous * 1.4), "Every boss move fires a denser barrage in both phases")
-				check(game.projectiles.size() <= 64 and game.projectiles.all(func(shot: Dictionary) -> bool: return not shot.friendly and shot.velocity.length() <= 400 and shot.life <= 3.3), "Denser boss volleys keep finite counts, speeds and lifetimes")
-	print("Dense boss barrage checks complete")
+				if floor_number == 0:
+					check(game.view.enemy_action_frame(boss) == 3 + move * 2, "The guard uses a unique release frame for each move")
+				elif game.is_yamada(boss):
+					check(game.view.yamada_action_frame(boss) == 3 + move * 2, "Yamada uses a unique release frame for each move")
+				signatures[attack_signature(boss)] = true
+				check(game.projectiles.size() <= 64 and game.projectiles.all(func(shot: Dictionary) -> bool: return not shot.friendly and shot.velocity.length() <= 400 and shot.life <= 3.3), "Boss volleys keep finite counts, speeds and lifetimes")
+			check(signatures.size() >= 3, "Each attacking boss phase has at least three attack patterns")
+	print("Boss attack cycle checks complete")
 
 func test_destructible_cover() -> void:
 	safe_start()
@@ -796,6 +1024,10 @@ func test_distinct_bosses() -> void:
 		check(boss.max_hp > 390 + floor_number * 260, "Each floor boss has more base health than before")
 		boss.age = 2
 		boss.cooldown = 0
+		if game.is_yang(boss):
+			boss.phase = 1
+			boss.castle_shield = false
+			boss.windup = 0.0
 		game.update_enemies(0.01)
 		check(boss.windup > 0 and game.projectiles.is_empty(), "Each stronger boss still warns before firing")
 		for i in range(46):
@@ -803,13 +1035,14 @@ func test_distinct_bosses() -> void:
 		signatures[str(game.projectiles.map(func(shot: Dictionary) -> Vector2: return shot.velocity)) + str(boss.charge)] = true
 		check(boss.cooldown <= 1.9, "Boss attack cadence is faster than before")
 		if floor_number == 1:
-			check(boss.charge > 0 and boss.charge_left == 1, "Workshop boss starts a two-charge combination")
-			boss.charge = 0
+			check(game.projectiles.size() == 5 and boss.guard_time == 0.0, "Office gatekeeper opens with aimed badge shots")
+			game.projectiles.clear()
 			game.boss_attack(boss)
-			check(boss.charge > 0 and boss.charge_left == 0, "Workshop boss follows through with the second charge")
+			check(boss.guard_time > 0 and game.projectiles.size() == 9, "Office gatekeeper switches to a shielded counterattack")
 		elif floor_number == game.Data.FLOOR_COUNT - 1:
+			boss.attack = boss.moves.find("summon")
 			game.boss_attack(boss)
-			check(game.enemies.size() == 4, "Castle boss mixes rotating barrages with reinforcements")
+			check(game.enemies.size() == 4 and game.enemies[1].kind == "chess_rook" and game.enemies[2].kind == "ink_scribe", "Peak Yang alternates lane volleys with local summons")
 		game.enemies.clear()
 		game.projectiles.clear()
 		var shark: Dictionary = game.spawn_enemy(game.room_center(), "shark")
@@ -821,9 +1054,16 @@ func test_distinct_bosses() -> void:
 
 func test_expanded_campaign() -> void:
 	check(game.Data.FLOOR_COUNT == 7 and game.Data.FLOOR_NAMES.size() == 7 and game.Data.FLOOR_STYLES.size() == 7 and game.Data.FLOOR_COLORS.size() == 7 and game.Data.FLOOR_STORIES.size() == 7 and game.Data.BOSS_NAMES.size() == 7 and game.Data.BOSS_HEALTH.size() == 7 and game.Data.SHARK_HEALTH.size() == 7, "Seven-floor data covers names, art, story and enemy scaling")
+	check(game.Data.FLOOR_NAMES[0] == "张江高科" and game.Data.FLOOR_STYLES[1] == "office" and not "workshop" in game.Data.FLOOR_STYLES and game.Data.BOSS_NAMES[0] == "保安大爷", "Zhangjiang street and its security guard lead into the office without a workshop floor")
 	check(game.Data.BOSS_NAMES[5].contains("山田") and game.Data.BOSS_NAMES[-1].contains("杨梓亮"), "Yamada guards his dojo and Yang remains the final boss")
-	check(game.yamada_atlas.frames.size() == 4 and game.stage_atlases.size() == 4, "Yamada and the four new environment atlases are loaded")
-	for theme in ["server", "garden", "sumo"]:
+	check(game.Data.BOSS_ART[5] == -1 and game.Data.BOSS_ART[-1] == -1 and game.enemy_atlas.texture.resource_path.ends_with("/enemies.png"), "Named bosses reserve their own art while the generic cast atlas remains available")
+	check(game.yamada_atlas.frames.size() == 8 and game.yamada_split_atlas.frames.size() == 4 and game.stage_atlases.size() == 4, "Yamada supports separate action and split atlases")
+	for atlas in [game.yamada_atlas, game.yamada_split_atlas]:
+		var image: Image = atlas.texture.get_image()
+		for frame in atlas.frames:
+			var gap := Vector2i(frame.region.position)
+			check(image.get_pixelv(gap).a == 0.0 and frame.bounds.size.y < frame.region.size.y, "Yamada atlas cells contain cutout sprites on transparent backgrounds")
+	for theme in ["server", "sumo"]:
 		var atlas: RefCounted = game.stage_atlases[theme]
 		var image: Image = atlas.texture.get_image()
 		check(atlas.frames.size() == 8 and image.get_pixel(20, image.get_height() - 20).a < 0.05, "Theme props retain real transparent backgrounds: " + theme)
@@ -856,17 +1096,33 @@ func test_expanded_campaign() -> void:
 	game.projectiles.clear()
 	game.boss_attack(boss)
 	check(game.projectiles.size() == 24 and game.effects.any(func(effect: Dictionary) -> bool: return effect.kind == "dust"), "Yamada's third attack stomps out a denser shockwave and dust")
-	boss.hp = boss.max_hp * 0.4
+	game.projectiles.clear()
+	game.hit_enemy(boss, boss.max_hp * 2.0, game.player)
+	check(is_equal_approx(boss.hp, boss.max_hp * 0.5) and not boss.dead, "A lethal blow still triggers Yamada's half-health split")
 	boss.cooldown = 10
 	game.update_enemies(0.01)
-	for i in range(8):
+	check(boss.get("split_time", 0.0) > 0.0 and game.enemies.size() == 1 and boss.windup <= 0.0, "The original telegraphs splitting before the four clones appear")
+	var split_hp: float = boss.hp
+	for i in range(62):
 		game.update_enemies(1.0 / 60.0)
-	check(boss.phase == 1 and boss.windup > 0, "Yamada enrages at half health while preserving his warning")
-	boss.attack = 5
+	var clones: Array = game.enemies.duplicate()
+	check(boss.dead and clones.size() == 4, "The original is replaced by exactly four clones")
+	if clones.size() != 4:
+		return
+	for clone in clones:
+		check(clone.get("yamada_clone", false) and clone.phase == 1 and is_equal_approx(clone.hp, split_hp * 1.4 / 4.0) and clone.hp == clone.max_hp and game.walkable(clone.p, clone.radius), "Each clone is independent, walkable and inherits 35 percent of the original's remaining health")
+	clones[0].attack = 5
 	game.projectiles.clear()
-	game.boss_attack(boss)
-	check(game.projectiles.size() == 36 and game.enemies.size() == 3, "Enraged Yamada adds shockwaves and bounded reinforcements")
-	game.hit_enemy(boss, 1000000, game.player)
+	game.boss_attack(clones[0])
+	check(game.projectiles.size() == 36 and game.enemies.size() == 6, "Enraged clones retain shockwaves and bounded reinforcements")
+	var kills: int = game.kills
+	for i in range(3):
+		game.hit_enemy(clones[i], 1000000, game.player)
+		check(game.enemies.size() == 5 - i and game.kills == kills and game.drops.is_empty(), "Defeating an individual clone leaves combat active with no boss reward")
+	step(46)
+	check(game.state == "playing" and not game.current_room().cleared, "The surviving clone keeps the boss room locked")
+	game.hit_enemy(clones[3], 1000000, game.player)
+	check(game.enemies.is_empty() and game.kills == kills + 1 and game.drops.size() == 1 and game.drops[0].value == 60, "The fourth clone finishes Yamada once and clears any reinforcements")
 	step(46)
 	check(game.state == "skill" and game.floor_index == 5, "Yamada's defeat gives the regular floor reward")
 	game.choose_skill(0)
@@ -924,16 +1180,198 @@ func test_wilds_chapter() -> void:
 	check(game.floor_index == 5 and game.dialogue_kind == "floor" and game.dialogue().line.contains("山田"), "The wilds chapter proceeds to Yamada rather than prematurely rescuing the princess")
 	print("Forest, meadow and Niulai checks complete")
 
+func test_speech_bubbles() -> void:
+	var bounds := Rect2(12, 12, 1256, 696)
+	var size := Vector2(170, 42)
+	var left: Rect2 = game.view.speech_bubble_rect(Vector2(1220, 100), size, bounds, 44.0)
+	var right: Rect2 = game.view.speech_bubble_rect(Vector2(55, 705), size, bounds, -44.0)
+	check(bounds.encloses(left) and left.end.x < 1220, "The bubble switches to the left at the right screen edge")
+	check(bounds.encloses(right) and right.position.x > 55, "The bubble switches to the right and stays above the lower screen edge")
+	safe_start()
+	var boss: Dictionary = game.spawn_enemy(game.room_center() + Vector2(200, 0), "boss")
+	boss.age = 2.0
+	boss.cooldown = 10.0
+	game.notify("场景提示")
+	game.boss_say(boss, "测试台词")
+	check(boss.speech_time > 0 and game.speech == "来了" and game.speech_time > 0 and game.message == "场景提示", "Player speech, boss speech and system prompts can coexist")
+	await redraw_overlay()
+	game.update_enemies(3.0)
+	check(boss.speech_time == 0 and game.speech_time > 0, "The boss bubble expires independently of the player's bubble")
+
+func test_dark_home() -> void:
+	var floor_number: int = game.Data.FLOOR_STYLES.find("dark_home")
+	check(floor_number == 3 and not "garden" in game.Data.FLOOR_STYLES and npc_index("ruoyu") == -1, "Dark Home replaces the greenhouse and Ruoyu leaves the NPC pool")
+	for seed_number in range(1, 31):
+		var layout: Dictionary = game.Data.generate(seed_number, floor_number)
+		var route: Array = layout.rooms.filter(func(room: Dictionary) -> bool: return room.main_route)
+		var areas: Array = route.map(func(room: Dictionary) -> int: return room.area)
+		var sorted_areas: Array = areas.duplicate()
+		sorted_areas.sort()
+		check(areas == sorted_areas and [0, 1, 2, 3].all(func(area: int) -> bool: return area in areas) and areas.count(3) == 1 and layout.rooms[layout.boss].area == 3, "Main route always leads from internet cafe to courtyard to living room to bedroom")
+	safe_start()
+	game.floor_index = floor_number
+	game.generate_floor()
+	var boss_room: Dictionary = game.rooms.filter(func(room: Dictionary) -> bool: return room.type == "boss")[0]
+	game.enter_room(boss_room.id)
+	var boss: Dictionary = game.enemies[0]
+	boss.age = 2.0
+	check(game.boss_name(boss) == "若宇" and game.ruoyu_atlases[0].frames.size() == 12 and game.ruoyu_atlases[1].frames.size() == 12 and game.ruoyu_unseal_atlas.frames.size() == 4, "The bedroom spawns Ruoyu with two complete animation sheets and the four cutscene frames")
+	check(not "pounce" in boss.moves and game.ruoyu_pounce_atlas.frames.size() == 8, "The pounce atlas is loaded and the move is locked out of phase one")
+	var quotes: Array[String] = ["让我看看", "我房里有一些好康的", "好他妈卡我操了", "味真足", "哎呦"]
+	for move in range(quotes.size()):
+		game.enemies.assign([boss])
+		boss.windup = 0.5
+		check(game.view.enemy_action_frame(boss, 6) == move * 2 + 2, "Ruoyu's attacks have distinct windup poses")
+		boss.windup = 0.0
+		game.boss_attack(boss)
+		check(boss.speech == quotes[move] and boss.speech_time > 0.0 and game.view.enemy_action_frame(boss, 6) == move * 2 + 3, "Ruoyu's attacks set the speaker's bubble and matching release pose")
+	game.enemies.assign([boss])
+	game.hit_enemy(boss, boss.max_hp * 2.0, game.player)
+	check(not boss.dead and is_equal_approx(boss.hp, boss.max_hp * 0.5), "A large normal hit stops at the mandatory phase transition")
+	step()
+	var time_before: float = game.run_time
+	var position: Vector2 = game.player
+	check(game.state == "ruoyu_unseal" and boss.phase == 1 and game.projectiles.is_empty() and game.Data.RUOYU_UNSEAL_QUOTE == "听话，给我看看！", "Half health clears attacks and starts the full-screen unsealing scene")
+	game.hit_enemy(boss, boss.max_hp, game.player)
+	Input.action_press("move_right")
+	step(60)
+	Input.action_release("move_right")
+	check(game.state == "ruoyu_unseal" and game.run_time == time_before and game.player == position and is_equal_approx(boss.hp, boss.max_hp * 0.5), "Combat, movement and the run clock pause throughout the cutscene")
+	step(115)
+	check(game.state == "playing" and boss.phase == 1 and game.ruoyu_atlases[0].texture != game.ruoyu_atlases[1].texture, "Combat resumes in the glasses-off phase")
+	check(game.next_enemy_move(boss) == "pounce" and boss.moves.count("pounce") == 1, "Pounce unlocks once and opens the second phase")
+	game.player = boss.p + Vector2(180, 0)
+	var landing: Vector2 = game.player
+	boss.cooldown = 0.0
+	game.health = 80.0
+	game.invulnerable = 0.0
+	game.update_enemies(0.01)
+	check(game.view.ruoyu_pounce_frame(boss) == 4 and game.attack_center(boss, "pounce") == landing, "A glasses-off crouch warns at the locked landing point")
+	game.player += Vector2(0, 155)
+	game.update_enemies(0.30)
+	check(game.attack_center(boss, "pounce") == landing, "Pounce does not chase movement after warning")
+	game.player = landing
+	game.update_enemies(0.70)
+	game.update_enemies(0.22)
+	check(game.view.ruoyu_pounce_frame(boss) == 5 and boss.p.distance_to(landing) < 100 and game.health == 80.0, "Ruoyu travels visibly in the air without doing repeated contact damage")
+	game.update_enemies(0.24)
+	var after_landing: float = game.health
+	var landed: Vector2 = boss.p
+	check(game.view.ruoyu_pounce_frame(boss) == 6 and after_landing <= 58.0 and landed.distance_to(landing) < 2.0, "Flying impact deals heavy damage and switches to the prone pose")
+	game.update_enemies(0.5)
+	check(game.view.ruoyu_pounce_frame(boss) == 7 and boss.p == landed and game.health == after_landing, "Ruoyu pushes himself up during a damage-free recovery window")
+	game.update_enemies(0.45)
+	check(game.view.ruoyu_pounce_frame(boss) == -1 and boss.pounce_recovery == 0.0, "Ruoyu stands up before preparing another move")
+	finish_encounter()
+	check(game.state == "skill" and game.choose_skill(0) and game.floor_index == 4, "Ruoyu's defeat awards a skill and advances to the forest")
+	print("Dark Home route, Ruoyu dialogue and unsealing checks complete")
+
+func test_yang_encounter() -> void:
+	safe_start()
+	game.floor_index = game.Data.FLOOR_STYLES.find("castle")
+	game.generate_floor()
+	for room in game.rooms:
+		if room.type == "boss":
+			game.enter_room(room.id)
+			break
+	var boss: Dictionary = game.enemies[0]
+	boss.age = 2.0
+	game.hit_enemy(boss, boss.max_hp * 2.0, game.player)
+	check(game.is_yang(boss) and boss.castle_shield and boss.hp == boss.max_hp and game.target_near(boss.p, 100).is_empty(), "Shielded Yang ignores damage and automatic targeting")
+	check(game.view.yang_action_frame(boss) == 1, "Phase one begins with its own summon windup pose")
+	game.update_enemies(0.86)
+	var wave: Array = game.enemies.slice(1)
+	check(wave.map(func(enemy: Dictionary) -> String: return enemy.kind) == ["lin_yu", "lin_yifeng", "chess_rook", "ink_scribe", "chess_rook"], "Yang summons both named escorts and three castle enemies")
+	check(game.view.yang_action_frame(boss) == 2 and game.projectiles.is_empty(), "Phase one uses its summon release pose and fires no attacks")
+	for i in range(wave.size() - 1):
+		game.hit_enemy(wave[i], 100000, game.player)
+	game.update_enemies(0.02)
+	check(boss.castle_shield and game.enemies.size() == 2, "The shield stays up while any escort survives")
+	game.hit_enemy(wave.back(), 100000, game.player)
+	game.update_enemies(0.02)
+	game.boss_attack(boss)
+	check(not boss.castle_shield and game.view.yang_action_frame(boss) == 3 and game.projectiles.is_empty(), "Clearing the escorts exposes the kneeling boss without a counterattack")
+	game.hit_enemy(boss, 50.0, game.player)
+	check(boss.hp < boss.max_hp and boss.phase == 0, "Weak Yang can be damaged before the peak transition")
+	game.update_enemies(game.Data.YANG_WEAK_DURATION - 0.02)
+	check(game.view.yang_action_frame(boss) == 3 and boss.attack == 0, "Yang stays kneeling for the brief opening")
+	game.update_enemies(0.03)
+	check(boss.phase == 0 and boss.castle_weak_time == 0.0 and game.view.yang_action_frame(boss) in [4, 5], "Yang stands up in phase one when the weak window ends above half health")
+	boss.cooldown = 0.0
+	game.update_enemies(0.01)
+	check(game.next_enemy_move(boss) == "decree" and game.view.yang_action_frame(boss) == 6, "Recovered Yang warns with his first-phase casting pose")
+	game.update_enemies(0.76)
+	check(boss.phase == 0 and game.view.yang_action_frame(boss) == 7 and not game.projectiles.is_empty(), "Recovered Yang fires his first-phase volley")
+	game.projectiles.clear()
+	boss.hp = boss.max_hp * 0.5 + 1.0
+	boss.cooldown = 0.0
+	game.update_enemies(0.01)
+	check(boss.phase == 0 and game.view.yang_action_frame(boss) == 6, "Yang still uses his first-phase attack one hit point above half health")
+	game.hit_enemy(boss, boss.max_hp * 2.0, game.player)
+	game.update_enemies(0.02)
+	check(boss.phase == 1 and boss.hp == boss.max_hp * 0.5 and boss.attack == 0 and game.view.yang_action_frame(boss) in [0, 1] and game.projectiles.is_empty(), "Half health interrupts the first-phase windup and starts the peak cycle even under a large hit")
+	var expected_quotes: Array[String] = ["你不理解", "你说的都不对", "美术都是耗材"]
+	for move in range(boss.moves.size()):
+		game.enemies.assign([boss])
+		boss.windup = 0.5
+		check(game.view.yang_action_frame(boss) == 2 + move * 2, "Each peak attack has a unique warning pose")
+		boss.windup = 0.0
+		game.boss_attack(boss)
+		check(game.view.yang_action_frame(boss) == 3 + move * 2 and boss.speech == expected_quotes[move % 3] and boss.speech_time > 0.0, "Each peak attack has its own release pose and cycles the speaker's bubble")
+	game.enemies.assign([boss])
+	game.obstacles.clear()
+	game.projectiles.clear()
+	boss.p = game.room_center()
+	game.health = 80.0
+	game.invulnerable = 0.0
+	var laser: int = boss.moves.find("laser")
+	for evade in [true, false]:
+		game.player = boss.p + Vector2(-175, 0)
+		boss.attack = laser
+		boss.cooldown = 0.0
+		game.effects.clear()
+		game.update_enemies(0.01)
+		var warned_end: Vector2 = boss.target
+		check(boss.windup > 0.9 and warned_end.x < game.player.x and warned_end.y == boss.p.y and game.current_room().rect.has_point(warned_end), "The red laser warns along a fixed in-room ray")
+		if evade:
+			game.player += Vector2(0, 90)
+		game.update_enemies(0.97)
+		check(game.effects[0].kind == "yang_laser" and game.effects[0].b == warned_end and game.view.yang_action_frame(boss) == 11, "The beam fires on the warned line in its laser release pose")
+		check(game.health == 80.0 if evade else game.health <= 62.0, "Sidestepping avoids the beam and standing in it takes damage")
+	var wall := Rect2(boss.p + Vector2(-118, -40), Vector2(35, 80))
+	game.obstacles.assign([wall])
+	check(game.laser_endpoint(boss.p, Vector2.LEFT).x >= wall.end.x, "Solid cover stops the laser preview")
+	for atlas in [game.yang_atlas, game.yang_escort_atlas, game.yang_peak_atlas]:
+		var source: Image = atlas.texture.get_image()
+		var used_frames: Array = atlas.frames.slice(0, 8) if atlas == game.yang_atlas else atlas.frames
+		check(used_frames.size() == (8 if atlas == game.yang_atlas else 12), "Yang and his escorts load all action frames")
+		for frame in used_frames:
+			check(frame.height > 165 and source.get_pixelv(Vector2i(frame.region.position + Vector2(6, 6))).a == 0.0, "Yang and his escorts have readable frames with transparent backgrounds")
+	for column in range(4):
+		var charger_frame: Dictionary = game.enemy_atlas.frames[8 + column]
+		var yang_frame: Dictionary = game.enemy_atlas.frames[12 + column]
+		check(yang_frame.bounds.position.y > 15, "Legacy Yang pose keeps its entire silhouette below the cut")
+		check(charger_frame.bounds.end.y < charger_frame.region.size.y - 15, "The row above Yang contains no stray pixels from his poses")
+	print("Yang shield, escorts, peak action poses and locked laser checks complete")
+
+func test_clean_sprite_alpha() -> void:
+	var dark: RefCounted = game.stage_atlases.dark_home
+	for entry in [[game.street_surface_atlas, 5], [game.street_surface_atlas, 6], [game.street_surface_atlas, 7], [game.workplace_item_atlas, 0], [game.security_atlas, 0], [dark, 4], [dark, 5], [dark, 6], [dark, 7], [dark, 9]]:
+		var texture: Image = entry[0].texture.get_image()
+		var region: Rect2 = entry[0].frames[entry[1]].region
+		var sample := Vector2i(region.position + Vector2(10, 10))
+		check(texture.get_pixelv(sample).a == 0.0, "Generated prop background pixels are fully transparent")
+	var wall: Rect2 = dark.frames[8].region
+	check(dark.texture.get_image().get_pixelv(Vector2i(wall.get_center())).a > 0.95, "Solid wall tiles retain their opaque surface")
+
 func test_encounter_modes() -> void:
 	var generated_modes: Dictionary = {}
-	var generated_elites: Dictionary = {}
 	for seed_number in range(1, 31):
 		for room in game.Data.generate(seed_number, 0).rooms:
 			if room.type == "combat":
 				generated_modes[room.encounter] = true
-			elif room.type == "elite":
-				generated_elites[room.elite_kind] = true
-	check(generated_modes.size() == 3 and generated_elites.size() == 3, "Generated floors vary all encounter modes and elite identities")
+	check(generated_modes.size() == 3, "Generated floors vary all encounter modes")
+	var first_wave_counts: Dictionary = {"single":14, "double":9, "stream":20}
 	for mode in ["single", "double", "stream"]:
 		safe_start()
 		var room: Dictionary = game.current_room()
@@ -946,7 +1384,7 @@ func test_encounter_modes() -> void:
 		game.invulnerable = 999
 		check(game.wave_total == (2 if mode == "double" else 1), "Single, double and streamed rooms advertise their actual wave structure")
 		var total: int = game.enemies.size() + game.spawn_remaining
-		check(total == game.encounter_population(), "Every encounter has a finite accounted spawn budget")
+		check(total == first_wave_counts[mode] and total == game.encounter_population(), "Every encounter starts with its configured finite spawn budget")
 		if mode == "stream":
 			check(game.enemies.size() == 4 and game.spawn_remaining == total - 4, "Streamed encounter starts small and holds back reinforcements")
 			var before: int = game.spawn_remaining
@@ -966,9 +1404,12 @@ func test_encounter_modes() -> void:
 		game.wave = 1
 		var early: int = game.encounter_population()
 		game.cleared_count = 18
-		check(game.encounter_population() > early, "Room population grows with successful clears in every mode")
+		check(game.encounter_population() == early + 6, "Room population grows by one per three clears in every mode")
 		game.floor_index = 2
-		check(game.encounter_population() > early + 18, "Later floors add population on top of room progression")
+		check(game.encounter_population() == early + 10, "Later floors add two enemies per floor on top of room progression")
+		game.floor_index = game.Data.FLOOR_COUNT - 1
+		game.cleared_count = 60
+		check(game.encounter_population() == early + 28, "Late-room population caps the cleared-room bonus at sixteen")
 	safe_start()
 	game.current_room().rect = game.Data.ARENA
 	game.player = game.room_center() + Vector2(200, 0)
@@ -1013,7 +1454,9 @@ func test_elite_variety_and_summons() -> void:
 		game.current_room().rect = game.Data.ARENA
 		var boss: Dictionary = game.spawn_enemy(game.room_center(), "boss")
 		boss.phase = 1
-		boss.attack = 5
+		if game.is_yang(boss):
+			boss.castle_shield = false
+		boss.attack = 5 if boss.moves.is_empty() else boss.moves.find("summon")
 		game.boss_attack(boss)
 		check(game.enemies.size() > 1 and game.enemies.size() <= 7, "Each floor boss has a bounded reinforcement mechanic")
 		var summons: Array = game.enemies.filter(func(enemy: Dictionary) -> bool: return enemy != boss)
@@ -1107,9 +1550,9 @@ func test_npcs() -> void:
 		game.interact()
 		check(game.state == "npc", "Every NPC opens through actual proximity interaction")
 		check(game.accept_npc(), "Every NPC has an implemented service")
-		match index:
-			0: check(game.health == game.max_health(), "Ruoyu restores health up to the current maximum")
-			1:
+		var npc_id: String = game.Data.NPCS[index].id
+		match npc_id:
+			"rhode":
 				check(game.contract_pending and game.current_room().cleared and game.enemies.is_empty(), "Rhode keeps his meeting room safe and queues a later challenge")
 				for room in game.rooms:
 					if room.type == "combat":
@@ -1120,7 +1563,7 @@ func test_npcs() -> void:
 				finish_encounter()
 				check(game.current_room().cleared and game.points >= before + 45 and not game.contract_active, "Contract pays only after all combat waves finish")
 				check(game.cleared_count == 1, "Contract room still counts as a normal clear")
-			2:
+			"heide":
 				check(game.knight_active, "Heide joins as a temporary companion")
 				check(game.spawn_enemy(game.player).is_empty() and game.enemies.is_empty(), "NPC meeting rooms reject enemy spawning")
 				game.current_room().type = "combat"
@@ -1129,23 +1572,24 @@ func test_npcs() -> void:
 				enemy.age = 2
 				game.update_knight(0.1)
 				check(enemy.hp < enemy.max_hp, "Companion independently attacks an actual enemy")
-			3: check(game.points == 8 and game.damage_scale() > 1.1, "Basan training charges points and raises damage")
-			4: check(game.weapons.size() + game.equipment.size() == 2, "Laya grants a real weapon or equipment")
-			5: check(game.state == "shop" and game.stock.size() == 4, "Coin opens a persistent purchasable stock")
-			6: check(game.onion_skill, "Hashao unlocks Q onion guard")
-			7: check(game.weapons[0].tier == 2 and game.points == 20, "Jiahao upgrades an equipped weapon without charging or consuming a slot")
-		if index != 5:
+			"basan": check(game.points == 8 and game.damage_scale() > 1.1, "Basan training charges points and raises damage")
+			"laya": check(game.weapons.size() + game.equipment.size() == 2, "Laya grants a real weapon or equipment")
+			"coin": check(game.state == "shop" and game.stock.size() == 4, "Coin opens a persistent purchasable stock")
+			"onion": check(game.onion_skill, "Hashao unlocks Q onion guard")
+			"jiahao": check(game.weapons[0].tier == 2 and game.points == 20, "Jiahao upgrades an equipped weapon without charging or consuming a slot")
+		if npc_id != "coin":
 			game.state = "npc"
 			var before: int = game.points
 			check(not game.accept_npc() and game.points == before, "Each nonmerchant service can be claimed only once")
 	safe_start()
 	game.current_room().type = "npc"
-	game.current_room().npc = 3
+	game.current_room().npc = npc_index("basan")
 	game.current_room().npc_used = false
-	game.selected_npc = 3
+	game.selected_npc = game.current_room().npc
 	game.state = "npc"
 	game.points = 0
 	check(not game.accept_npc() and not game.current_room().npc_used and game.buff_damage == 0, "Unaffordable training remains available without applying buffs")
+	check(game.npc_reply == "先凑够 12 字节再来", "An NPC reply updates the conversation bubble")
 	safe_start()
 	while game.weapons.size() < 6:
 		game.add_item("pistol")
@@ -1154,17 +1598,17 @@ func test_npcs() -> void:
 	for entry in game.weapons + game.equipment:
 		entry.tier = 4
 	game.current_room().type = "npc"
-	game.current_room().npc = 4
+	game.current_room().npc = npc_index("laya")
 	game.current_room().npc_used = false
-	game.selected_npc = 4
+	game.selected_npc = game.current_room().npc
 	game.state = "npc"
 	check(game.accept_npc() and game.current_room().npc_used and game.equipment_count() == 7, "Unlimited equipment keeps Laya's gift claimable with full legendary weapons")
-	check(game.Data.NPCS[0].quote == "this is the way" and game.Data.NPCS[1].quote == "给毅川派活" and game.Data.NPCS[2].quote == "毅川救我" and game.Data.NPCS[3].quote == "好他妈卡我草了", "NPC catchphrases match the requested dialogue")
+	check(game.Data.NPCS[npc_index("rhode")].quote == "给毅川派活" and game.Data.NPCS[npc_index("heide")].quote == "毅川救我" and game.Data.NPCS[npc_index("basan")].quote == "好他妈卡我草了", "NPC catchphrases match the requested dialogue")
 	print("NPC checks complete")
 
 func test_heide_companion() -> void:
 	safe_start()
-	var heide: int = 2
+	var heide: int = npc_index("heide")
 	game.current_room().type = "npc"
 	game.current_room().npc = heide
 	game.current_room().npc_used = false
@@ -1263,9 +1707,9 @@ func test_new_characters() -> void:
 	check(game.state == "playing", "Leaving elite supplies resumes exploration")
 	safe_start()
 	game.current_room().type = "npc"
-	game.current_room().npc = 7
+	game.current_room().npc = npc_index("jiahao")
 	game.current_room().npc_used = false
-	game.selected_npc = 7
+	game.selected_npc = game.current_room().npc
 	game.state = "npc"
 	game.weapons[0].tier = 4
 	check(not game.accept_npc() and not game.current_room().npc_used, "Jiahao cannot exceed legendary quality or consume an unavailable upgrade")
@@ -1300,9 +1744,12 @@ func test_room_shops_and_skills() -> void:
 		check(game.stock.all(func(offer: Dictionary) -> bool: return offer.sold), "Purchased shelf records each sold card")
 		var saved_stock: Array = game.stock.duplicate(true)
 		var balance: int = game.points
-		check(not game.refresh_shop() and game.points == balance and game.stock == saved_stock and game.current_room().refreshes == 0, "Post-combat supplies reject refresh without changing stock, currency or counters")
+		check(game.refresh_shop() and game.points == balance and game.stock != saved_stock and game.current_room().refreshes == 1 and not game.stock[0].sold, "First battle supply refresh is free and stocks new purchases")
+		check(game.buy(0) and game.stock[0].sold and game.points < balance, "A second round of purchases works in the same battle supply visit")
+		balance = game.points
+		var cost: int = game.refresh_price()
 		key(KEY_R)
-		check(game.state == "shop" and game.stock == saved_stock and game.points == balance, "R cannot refresh sold-out post-combat supplies")
+		check(game.state == "shop" and game.current_room().refreshes == 2 and game.points == balance - cost and game.stock.all(func(offer: Dictionary) -> bool: return not offer.sold), "R uses the regular paid refresh price and opens another shelf")
 		key(KEY_TAB)
 		check(game.state == "inventory", "One-time supplies still allow organizing the inventory")
 		key(KEY_ESCAPE)
@@ -1334,9 +1781,8 @@ func test_room_shops_and_skills() -> void:
 		game.current_room().cleared = false
 		game.wave = 1
 		game.wave_total = 1
-		var boss: Dictionary = game.spawn_enemy(game.room_center() + Vector2(220, 0), "boss")
-		game.hit_enemy(boss, 100000, game.player)
-		step(46)
+		game.spawn_enemy(game.room_center() + Vector2(220, 0), "boss")
+		finish_encounter()
 		check(game.state == "skill" and game.skill_offers.size() == 3 and not game.has_shop(), "Floor boss gives three skill choices instead of a shop")
 		var ids: Dictionary = {}
 		for spec in game.skill_offers:
@@ -1388,7 +1834,7 @@ func test_room_shops_and_skills() -> void:
 			for layout in range(5):
 				for rect in game.Data.obstacles(layout, "combat", Rect2(Vector2.ZERO, room_size)):
 					var drawn: Rect2 = game.view.cover_draw_rect(rect)
-					var frame: Dictionary = game.view.stage_atlas().frames[game.view.cover_index()]
+					var frame: Dictionary = game.street_surface_atlas.frames[5] if floor_number == 0 else game.view.stage_atlas().frames[game.view.cover_index()]
 					check(rect.size == Vector2(96, 56), "Furniture footprints stay the same size in small and large rooms")
 					check(absf(drawn.size.x / drawn.size.y - frame.bounds.size.x / frame.bounds.size.y) < 0.001, "Furniture textures keep their source aspect ratio")
 	check(game.view.geometry_root.get_child_count() == game.rooms.size() + game.corridors.size(), "Static room and corridor geometry is retained separately from actors")
@@ -1413,6 +1859,8 @@ func test_campaign() -> void:
 			if game.current_room().type == "boss":
 				# Leave the boss for the end of this floor.
 				game.enemies.clear()
+			elif game.current_room().type in ["treasure", "rest", "npc", "shop"]:
+				check(game.current_room().cleared and game.enemies.is_empty() and game.closed_gates().is_empty(), "Service and treasure rooms stay safe and open on both routes")
 			else:
 				finish_encounter()
 				check(game.current_room().cleared, "Combat and elite rooms complete all waves")
@@ -1428,8 +1876,7 @@ func test_campaign() -> void:
 		game.rooms[boss_id].cleared = false
 		game.enter_room(boss_id)
 		check(game.enemies.size() == 1 and game.enemies[0].kind == "boss", "Every floor ends in a real unique boss encounter")
-		game.hit_enemy(game.enemies[0], 100000, game.player)
-		step(46)
+		finish_encounter()
 		check(game.current_room().cleared, "Defeating the boss unlocks the central portal")
 		if floor_number < game.Data.FLOOR_COUNT - 1:
 			game.knight_active = true
@@ -1466,10 +1913,14 @@ func test_campaign() -> void:
 
 func test_build_balance() -> void:
 	var ids: Dictionary = {}
+	var new_frames: Dictionary = {}
 	for spec in game.Data.WEAPONS + game.Data.EQUIPMENT:
 		check(not ids.has(spec.id), "Each expanded item has a unique identity")
 		ids[spec.id] = true
-		check(game.item_icons.has(spec.id) or game.Data.ITEM_ICONS.has(spec.id), "Every item has connected artwork")
+		check(spec.has("art_frame") or game.item_icons.has(spec.id) or game.Data.ITEM_ICONS.has(spec.id), "Every item has connected artwork")
+		if spec.has("art_frame"):
+			check(not new_frames.has(spec.art_frame) and game.workplace_item_atlas.frames[spec.art_frame].bounds.get_area() > 0, "Every workplace item uses its own image frame")
+			new_frames[spec.art_frame] = true
 		if game.item_icons.has(spec.id):
 			var icon: RefCounted = game.item_icons[spec.id]
 			check(icon.frames.size() == 1 and icon.frames[0].bounds.get_area() > 0 and icon.texture.get_image().get_pixel(0, 0).a < 0.01, "Each new thumbnail is a visible independent image with alpha")
@@ -1477,6 +1928,7 @@ func test_build_balance() -> void:
 			check(spec.attack_type in game.Data.ATTACK_NAMES, "Every weapon declares its attack attribute")
 		for id in spec.get("stats", {}):
 			check(id in game.Data.STAT_CAPS, "Every item stat has a gameplay limit")
+	check(game.Data.WEAPONS.size() == 30 and game.Data.EQUIPMENT.size() == 113 and new_frames.size() == 36, "All 143 weapons and equipment use the shared catalog")
 	safe_start()
 	game.add_item("scope")
 	check(is_equal_approx(game.damage_scale(), 1.0375), "Ordinary equipment grants one quarter of the former bonus")
@@ -1685,6 +2137,10 @@ func run() -> void:
 	check(game.hero_atlas.frames[0].anchor == game.hero_atlas.frames[15].anchor, "Four-direction hero animation uses a stable anchor")
 	check(game.camera is Camera2D and game.view.overlay.get_parent() is CanvasLayer, "World camera follows independently of the fixed full-window HUD")
 	check(game.vfx_atlas.frames.size() == 16 and game.utility_atlas.frames.size() == 16, "Generated animated VFX and world utility sprites are connected")
+	check(game.themed_enemy_atlas.frames.size() == 24 and game.themed_enemy_atlas.frames.all(func(frame: Dictionary) -> bool: return frame.height > 100), "The themed enemy sheet has 24 readable sprites")
+	check(game.street_atlas.frames[0].bounds.size.x > 700 and game.street_surface_atlas.frames.size() == 8 and game.street_surface_atlas.frames[7].height > 450, "The smaller entrance and higher tower use textural street art")
+	check(game.street_enemy_atlas.frames.size() == 24 and game.street_enemy_atlas.frames.all(func(frame: Dictionary) -> bool: return frame.height > 100), "Street enemies load 24 nonempty movement and attack frames")
+	check(game.security_atlas.frames.size() == 10 and game.security_atlas.frames.all(func(frame: Dictionary) -> bool: return frame.height > 300) and game.security_atlas.texture.get_image().get_pixel(0, 0).a < 0.01, "The security guard loads ten transparent animation frames")
 	test_generation()
 	test_motion_and_rooms()
 	test_continuous_traversal()
@@ -1698,12 +2154,18 @@ func run() -> void:
 	test_inventory_and_economy()
 	test_full_inventory_auto_merge()
 	test_equipment_stacks()
+	test_deployable_equipment()
 	test_room_progression()
 	test_enemy_variety()
+	test_themed_mechanics()
 	test_distinct_bosses()
-	test_dense_boss_barrages()
+	test_boss_move_cycles()
 	test_expanded_campaign()
 	test_wilds_chapter()
+	await test_speech_bubbles()
+	test_dark_home()
+	test_yang_encounter()
+	test_clean_sprite_alpha()
 	test_encounter_modes()
 	test_elite_variety_and_summons()
 	test_treasure_choices()
@@ -1713,6 +2175,8 @@ func run() -> void:
 	test_room_shops_and_skills()
 	test_build_balance()
 	test_campaign()
+	await test_inventory_screen()
+	await test_skip_floor()
 	print("RESULT: %d checks, %d failures" % [checks, failures])
 	game.queue_free()
 	await process_frame

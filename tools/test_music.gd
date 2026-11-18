@@ -51,7 +51,7 @@ func run() -> void:
 	audio.play_floor_music("unknown")
 	check(audio.music.stream == current, "Unknown style cannot interrupt current music")
 	game.start_run(20261114, true)
-	check(audio.music_style == "office", "Restart returns from later floors to the office score")
+	check(audio.music_style == "zhangjiang", "Restart returns from later floors to the Zhangjiang score")
 	for floor_number in range(game.Data.FLOOR_COUNT - 1):
 		for room in game.rooms:
 			room.cleared = true
@@ -66,7 +66,7 @@ func run() -> void:
 		check(game.next_floor() and audio.music_style == game.Data.FLOOR_STYLES[floor_number + 1], "Real floor progression switches the music: %d" % (floor_number + 1))
 		game.state = "playing"
 	game.start_run(20261114, true)
-	check(audio.music_style == "office", "A new run always restores first-floor music")
+	check(audio.music_style == "zhangjiang", "A new run always restores first-floor music")
 	# Let the queued startup effects finish before tearing down the audio mixer.
 	await create_timer(0.4).timeout
 	if enabled:
