@@ -12,3 +12,7 @@
 
 - 修改启动入口、主菜单或启动时加载的脚本及素材后，在无 `.godot` 缓存的临时项目副本中运行 `python tools/check_startup.py`，确认资源导入成功且主菜单初始化。用 `tools/run_godot_offscreen.py` 在隔离后台桌面验证主菜单画面，查看日志和截图。
 - 使用 `python tools/build_windows.py` 交付 Windows 包。打包须通过源码与导出 EXE 的启动检查，任何启动错误都须先修复。
+
+## Git 提交
+
+- 用户要求提交时，直接执行本地 `git commit`，无需再次向用户确认。
