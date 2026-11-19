@@ -5,6 +5,8 @@ const Data = preload("res://scripts/dungeon_data.gd")
 const View = preload("res://scripts/dungeon_view.gd")
 const Audio = preload("res://scripts/audio.gd")
 const Atlas = preload("res://scripts/sprite_atlas.gd")
+const Gamepad = preload("res://scripts/gamepad.gd")
+var pad := Gamepad.new()
 var hero_atlas: RefCounted
 var cast_atlas: RefCounted
 var heide_atlas: RefCounted
@@ -210,6 +212,7 @@ func _ready() -> void:
 	vfx_atlas = Atlas.new(load("res://assets/generated/dungeon/combat-vfx.png"), 4, 4)
 	utility_atlas = Atlas.new(load("res://assets/generated/dungeon/dungeon-utility.png"), 4, 4)
 	byte_atlas = Atlas.new(load("res://assets/generated/dungeon/icons/byte.png"), 1, 1)
+	add_child(pad)
 	setup_input()
 	audio = Audio.new()
 	add_child(audio)
@@ -238,8 +241,15 @@ func setup_input() -> void:
 			var event := InputEventKey.new()
 			event.physical_keycode = code
 			InputMap.action_add_event(action, event)
+	for binding in [["move_left", JOY_AXIS_LEFT_X, -1.0, JOY_BUTTON_DPAD_LEFT], ["move_right", JOY_AXIS_LEFT_X, 1.0, JOY_BUTTON_DPAD_RIGHT], ["move_up", JOY_AXIS_LEFT_Y, -1.0, JOY_BUTTON_DPAD_UP], ["move_down", JOY_AXIS_LEFT_Y, 1.0, JOY_BUTTON_DPAD_DOWN]]:
+		InputMap.action_set_deadzone(binding[0], 0.26)
+		pad.bind_axis(binding[0], binding[1], binding[2])
+		pad.bind_button(binding[0], binding[3])
+	pad.bind_button("interact", JOY_BUTTON_X)
+	pad.bind_button("onion", JOY_BUTTON_Y)
 
 func start_run(chosen_seed: int = 0, skip_story: bool = false) -> void:
+	pad.stop_rumble()
 	rng.randomize()
 	seed_value = chosen_seed if chosen_seed != 0 else rng.randi_range(1, 99999999)
 	rng.seed = seed_value
@@ -482,6 +492,8 @@ func hit_cover_area(origin: Vector2, aim: Vector2, reach: float, arc: float = -1
 			hit_cover(rect)
 
 func _process(delta: float) -> void:
+	if state != "playing":
+		pad.stop_combat_rumble()
 	clock += delta
 	message_time = maxf(0, message_time - delta)
 	view.queue_redraw()
@@ -573,6 +585,7 @@ func start_dash() -> void:
 	dash_cooldown = 1.8 / player_stat("dash_recovery")
 	invulnerable = maxf(invulnerable, 0.24)
 	audio.sfx("dash")
+	pad.pulse("dash")
 
 func use_onion() -> void:
 	if state != "playing" or not onion_skill or onion_cooldown > 0:
@@ -587,6 +600,7 @@ func use_onion() -> void:
 	add_effect("burst", player, player, Color.WHITE, 0.5, 280 + level * 35)
 	notify("洋葱守护 · %.1f 秒护盾" % shield_time)
 	audio.sfx("skill")
+	pad.pulse("skill")
 
 func turret_cooldown(id: String) -> float:
 	return maxf(0.0, float(turret_ready_at.get(id, 0.0)) - run_time)
@@ -836,6 +850,7 @@ func update_enemies(delta: float) -> void:
 				ruoyu_unseal_time = 0.0
 				state = "ruoyu_unseal"
 				audio.sfx("skill")
+				pad.pulse("phase")
 				return
 			if ruoyu and update_ruoyu_pounce(enemy, delta):
 				continue
@@ -847,6 +862,7 @@ func update_enemies(delta: float) -> void:
 					enemy.moving = false
 					notify("山田开始蓄力分身！")
 					audio.sfx("skill")
+					pad.pulse("phase")
 				enemy.split_time -= delta
 				if enemy.split_time <= 0.0:
 					split_yamada(enemy)
@@ -872,6 +888,8 @@ func update_enemies(delta: float) -> void:
 					if enemy.aim.is_zero_approx():
 						enemy.aim = Vector2(enemy.facing, 0)
 					enemy.target = laser_endpoint(enemy.p, enemy.aim)
+				if next_enemy_move(enemy) in ["laser", "lunge", "slam", "pounce", "mark", "pull"]:
+					boss_rumble("windup", enemy.p)
 			if enemy.windup > 0:
 				enemy.windup -= delta
 				speed = 0
@@ -1000,6 +1018,7 @@ func update_yang_phase_one(enemy: Dictionary, delta: float) -> bool:
 			for kind in ["lin_yu", "lin_yifeng", "chess_rook", "ink_scribe", "chess_rook"]:
 				spawn_enemy(spawn_point(), kind)
 			add_effect("burst", enemy.p, enemy.p, Color("ffb878"), 0.46, 150)
+			boss_rumble("summon", enemy.p)
 			notify("护盾由林宇、林逸枫和小怪维持")
 		return true
 	if enemy.castle_shield:
@@ -1009,6 +1028,7 @@ func update_yang_phase_one(enemy: Dictionary, delta: float) -> bool:
 			enemy.attack_pose_time = 0.0
 			add_effect("burst", enemy.p, enemy.p, Color("84cdf9"), 0.60, 170)
 			audio.sfx("skill")
+			pad.pulse("phase", 0.75)
 			notify("护盾已破 · 杨梓亮陷入虚弱")
 		return true
 	if enemy.hp <= enemy.max_hp * 0.5:
@@ -1018,6 +1038,7 @@ func update_yang_phase_one(enemy: Dictionary, delta: float) -> bool:
 		enemy.attack_pose_time = 0.0
 		enemy.attack = 0
 		enemy.cooldown = 0.65
+		pad.pulse("phase")
 		notify("杨梓亮 · 巅峰状态")
 		return false
 	if enemy.castle_weak_time > 0.0:
@@ -1034,6 +1055,7 @@ func update_ruoyu_pounce(enemy: Dictionary, delta: float) -> bool:
 		if enemy.pounce_time <= 0.0:
 			var radius: float = attack_radius(enemy, "pounce")
 			add_effect("dust", enemy.p, enemy.p, Color.WHITE, 0.50, radius * 2.0)
+			boss_rumble("slam", enemy.p)
 			if player.distance_to(enemy.p) <= radius and line_clear(enemy.p, player):
 				hurt((22.0 + enemy.phase * 3.0) * (1.0 + minf(0.35, cleared_count * 0.025)), enemy.p)
 			enemy.pounce_recovery = Data.RUOYU_POUNCE_RECOVERY
@@ -1070,6 +1092,13 @@ func laser_endpoint(origin: Vector2, aim: Vector2) -> Vector2:
 func perform_enemy_move(enemy: Dictionary, move: String) -> void:
 	enemy.attack_pose_time = 0.30
 	var leader: bool = is_boss(enemy)
+	if leader:
+		match move:
+			"lunge", "pounce": boss_rumble("charge", enemy.p)
+			"slam", "pull", "mark": boss_rumble("slam", attack_center(enemy, move))
+			"laser": boss_rumble("laser", enemy.p)
+			"summon": boss_rumble("summon", enemy.p)
+			_: boss_rumble("volley", enemy.p)
 	var tint: Color = Data.FLOOR_COLORS[floor_index]
 	var power: float = 13.0 + enemy.phase * 2 if leader else 7.0 + floor_index * 0.6
 	match move:
@@ -1141,6 +1170,7 @@ func boss_attack(enemy: Dictionary) -> void:
 		perform_enemy_move(enemy, move)
 		return
 	if enemy.kind == "baola":
+		boss_rumble("charge", enemy.p)
 		if enemy.charge_left <= 0:
 			enemy.charge_left = 2 + enemy.phase
 		enemy.charge_left -= 1
@@ -1153,6 +1183,7 @@ func boss_attack(enemy: Dictionary) -> void:
 		add_effect("dust", enemy.p, enemy.p, Color.WHITE, 0.4, 130)
 		return
 	if enemy.kind == "brood":
+		boss_rumble("summon", enemy.p)
 		for i in range(8 + enemy.phase * 4):
 			shoot(enemy.p, Vector2.from_angle(TAU * i / (8 + enemy.phase * 4) + enemy.attack * 0.2) * 180, 11, false, Color("bb9ef1"), 0, 3.0)
 		if enemies.size() < 9:
@@ -1161,12 +1192,14 @@ func boss_attack(enemy: Dictionary) -> void:
 		add_effect("burst", enemy.p, enemy.p, Color("bb9ef1"), 0.4, 150)
 		return
 	if enemy.kind == "warden":
+		boss_rumble("volley", enemy.p)
 		for i in range(12 + enemy.phase * 4):
 			shoot(enemy.p, Vector2.from_angle(TAU * i / (12 + enemy.phase * 4) + enemy.attack * 0.35) * 210, 12, false, Color("8fcfff"), 0, 3.0)
 		for i in range(3):
 			shoot(enemy.p, enemy.aim.rotated((i - 1) * 0.2) * 310, 13, false, Color("8fcfff"), 0, 2.6)
 		return
 	if enemy.kind == "shark":
+		boss_rumble("charge", enemy.p)
 		enemy.charge = 0.52 + enemy.phase * 0.12
 		var count: int = 5 + floor_index * 2 + enemy.phase * 2
 		for i in range(count):
@@ -1182,17 +1215,20 @@ func boss_attack(enemy: Dictionary) -> void:
 	match Data.FLOOR_STYLES[floor_index]:
 		"wilds":
 			if enemy.attack % 4 in [1, 2]:
+				boss_rumble("charge", enemy.p)
 				enemy.charge_left = 1 if enemy.attack % 4 == 1 else 0
 				enemy.charge = 0.6 + enemy.phase * 0.1
 				for side in [-1, 1]:
 					for i in range(9 + enemy.phase * 2):
 						shoot(enemy.p, enemy.aim.rotated(side * (0.65 + i * 0.1)) * 205, 14, false, Color("c7de8f"), 0, 2.5)
 			elif enemy.attack % 4 == 3:
+				boss_rumble("slam", enemy.p)
 				var count: int = 28 + enemy.phase * 10
 				for i in range(count):
 					shoot(enemy.p, Vector2.from_angle(TAU * i / count + enemy.attack * 0.1) * 190, 15, false, Color("c7de8f"), 0, 3.0)
 				add_effect("dust", enemy.p, enemy.p, Color.WHITE, 0.6, 250)
 			else:
+				boss_rumble("volley", enemy.p)
 				for row in range(4):
 					for i in range(9 + enemy.phase * 2):
 						shoot(enemy.p, enemy.aim.rotated((i - (8 + enemy.phase * 2) * 0.5) * 0.15) * (180 + row * 40), 14, false, Color("c7de8f"), 0, 2.8)
@@ -1203,11 +1239,13 @@ func boss_attack(enemy: Dictionary) -> void:
 			enemy.attack_pose_time = 0.30
 			match enemy.attack % 3:
 				1:
+					boss_rumble("charge", enemy.p)
 					enemy.charge = 0.62 + enemy.phase * 0.12
 					for side in [-1, 1]:
 						for i in range(9 + enemy.phase * 2):
 							shoot(enemy.p, enemy.aim.rotated(side * (0.6 + i * 0.09)) * 195, 14, false, Color("efbd76"), 0, 2.2)
 				2:
+					boss_rumble("volley", enemy.p)
 					for row in range(4 + enemy.phase):
 						for i in range(7):
 							shoot(enemy.p, enemy.aim.rotated((i - 3) * 0.12) * (215 + row * 38), 15, false, Color("efbd76"), 0, 2.3)
@@ -1220,6 +1258,10 @@ func boss_attack(enemy: Dictionary) -> void:
 				for kind in ["straw_brawler", "drum_yokai"]:
 					spawn_enemy(spawn_point(), kind)
 	add_effect("dust", enemy.p, enemy.p, Color.WHITE, 0.45, 150)
+
+func boss_rumble(kind: String, point: Vector2) -> void:
+	var gain: float = remap(clampf(player.distance_to(point), 70.0, 720.0), 70.0, 720.0, 1.0, 0.42)
+	pad.pulse(kind, gain)
 
 func update_weapons(delta: float) -> void:
 	for weapon in weapons:
@@ -1441,16 +1483,19 @@ func hit_enemy(enemy: Dictionary, damage: float, source: Vector2, traits: Dictio
 		enemies.erase(enemy)
 		if enemy.get("yamada_clone", false) and enemies.any(func(other: Dictionary) -> bool: return other.get("yamada_clone", false)):
 			audio.sfx("kill")
+			pad.pulse("kill")
 			return
 		kills += 1
-		audio.sfx("kill_boss" if is_boss(enemy) else "kill")
-		var reward: int = 60 if is_boss(enemy) else (1 if enemy.kind == "minislime" else (5 if enemy.kind in ["charger", "dasher"] else 3))
+		var defeated_boss: bool = is_boss(enemy)
+		audio.sfx("kill_boss" if defeated_boss else "kill")
+		pad.pulse("victory" if defeated_boss else "kill")
+		var reward: int = 60 if defeated_boss else (1 if enemy.kind == "minislime" else (5 if enemy.kind in ["charger", "dasher"] else 3))
 		drops.append({"p":enemy.p, "value":reward, "age":0.0})
 		if enemy.kind == "splitter":
 			for i in range(3):
 				var p: Vector2 = slide(enemy.p, Vector2.from_angle(TAU * i / 3) * 34, 10)
 				spawn_enemy(p, "minislime")
-		if is_boss(enemy):
+		if defeated_boss:
 			for other in enemies:
 				other.dead = true
 			enemies.clear()
@@ -1479,6 +1524,8 @@ func hurt(amount: float, source: Vector2) -> void:
 	if health <= 0:
 		health = 0
 		finish_run(false)
+	else:
+		pad.pulse("hurt", clampf(0.50 + actual / max_health(), 0.0, 1.0))
 
 func update_drops(delta: float) -> void:
 	for i in range(drops.size() - 1, -1, -1):
@@ -1796,7 +1843,7 @@ func buy(index: int) -> bool:
 	points -= price
 	offer.sold = true
 	if not auto_merge:
-		notify("获得 " + Data.item(offer.id).name + " · Tab 查看 / 合并")
+		notify("获得 " + Data.item(offer.id).name + " · " + pad.key("Start", "Tab") + " 查看 / 合并")
 	audio.sfx("coffee")
 	return true
 
@@ -1833,7 +1880,7 @@ func interact() -> void:
 	if not room.rect.has_point(player):
 		return
 	if player.distance_to(room_center()) > 90:
-		notify("走近中央装置或 NPC 后按 E")
+		notify("走近中央装置或 NPC 后按 " + pad.key("X", "E"))
 		return
 	match room.type:
 		"boss": open_skill_reward()
@@ -1934,7 +1981,7 @@ func accept_npc() -> bool:
 				if can_add_item(spec_item.id):
 					candidates.append(spec_item)
 			if candidates.is_empty():
-				npc_reply = "先在 Tab 背包里腾出一个位置吧"
+				npc_reply = "先在背包里腾出一个位置吧"
 				return false
 			var gift: Dictionary = candidates[rng.randi_range(0, candidates.size() - 1)]
 			var inventory: Array[Dictionary] = weapons if gift.kind == "weapon" else equipment
@@ -1946,7 +1993,7 @@ func accept_npc() -> bool:
 		"onion":
 			onion_skill = true
 			onion_cooldown = 0
-			notify("学会 Q 洋葱守护 · 震退敌人并获得 2 秒护盾")
+			notify("学会洋葱守护 · " + pad.key("Y", "Q") + " 震退敌人并获得 2 秒护盾")
 		"jiahao":
 			var upgraded: bool = false
 			for weapon in weapons:
@@ -2020,6 +2067,7 @@ func finish_run(won: bool) -> void:
 		best_floor = maxi(best_floor, floor_index + (1 if won else 0))
 		save_record()
 	audio.sfx("win" if won else "dead")
+	pad.pulse("victory" if won else "death")
 
 func save_record() -> bool:
 	var file := FileAccess.open(record_path + ".tmp", FileAccess.WRITE)
@@ -2060,6 +2108,10 @@ func start_sandbox() -> void:
 	get_tree().change_scene_to_file("res://scenes/sandbox.tscn")
 
 func _unhandled_input(event: InputEvent) -> void:
+	pad.observe(event)
+	if event is InputEventJoypadButton or event is InputEventJoypadMotion:
+		gamepad_input(event)
+		return
 	if event is InputEventMouseMotion:
 		view.move_pointer(event.position)
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -2068,7 +2120,42 @@ func _unhandled_input(event: InputEvent) -> void:
 		view.right_click(event.position)
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
-	var code: int = event.keycode
+	keyboard_shortcut(event.keycode)
+
+func gamepad_input(event: InputEvent) -> void:
+	if event.device != pad.device or not pad.active:
+		return
+	var direction: Vector2 = pad.menu_direction(event)
+	if state != "playing" and not direction.is_zero_approx():
+		view.overlay.move_menu_focus(direction)
+	if not event is InputEventJoypadButton or not event.pressed:
+		return
+	match event.button_index:
+		JOY_BUTTON_A:
+			if state == "playing" and interaction_cooldown <= 0.0:
+				start_dash()
+			elif state != "playing":
+				view.overlay.confirm_menu_focus()
+		JOY_BUTTON_B:
+			if state != "playing":
+				keyboard_shortcut(KEY_ESCAPE)
+		JOY_BUTTON_X:
+			if state == "inventory":
+				view.overlay.open_focused_item()
+		JOY_BUTTON_Y:
+			if state == "title":
+				start_sandbox()
+			elif state == "shop":
+				refresh_shop()
+		JOY_BUTTON_LEFT_SHOULDER:
+			keyboard_shortcut(KEY_F1)
+		JOY_BUTTON_RIGHT_SHOULDER:
+			if state == "playing":
+				deploy_turret()
+		JOY_BUTTON_START:
+			toggle_inventory()
+
+func keyboard_shortcut(code: int) -> void:
 	if code == KEY_F11:
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
 	elif code == KEY_F3:

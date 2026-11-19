@@ -57,14 +57,14 @@ func box(rect: Rect2, color: Color = PANEL, border: Color = EDGE, radius: int = 
 	draw_style_box(styles[key], rect)
 
 func button(rect: Rect2, label: String, action: String, index: int = 0, primary: bool = false, enabled: bool = true) -> void:
-	var hover: bool = rect.has_point(game.pointer) and enabled
+	var hover: bool = not game.pad.active and rect.has_point(game.pointer) and enabled
 	box(rect, (MINT.lightened(0.08) if hover else MINT) if primary and enabled else (Color("304a50") if hover else PANEL), MINT if primary or hover else EDGE)
 	var size: int = 16
 	while size > 11 and game.font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > rect.size.x - 14:
 		size -= 1
 	centered(label, rect.get_center() + Vector2(0, size * 0.36), size, INK if primary and enabled else (WHITE if enabled else MUTED), primary)
 	if enabled:
-		buttons.append({"rect":rect, "action":action, "index":index, "state":game.state})
+		buttons.append({"rect":rect, "action":action, "index":index, "state":game.state, "primary":primary})
 
 func make_tiles() -> void:
 	var t: int = Data.TILE
@@ -214,7 +214,16 @@ func _draw() -> void:
 	match surface:
 		"sky": draw_sky()
 		"world": draw_world()
-		"ui": draw_ui()
+		"ui":
+			draw_ui()
+			if game.pad.active and game.state != "playing":
+				var focus: Dictionary = game.pad.focused(menu_entries(), game.state)
+				if not focus.is_empty():
+					draw_rect(focus.rect.grow(3), GOLD, false, 2.0)
+					var hint: String = "方向键 / 左摇杆选择 · {A} 确认"
+					if game.state != "dead":
+						hint += " · {B} 返回"
+					centered(game.pad.text("", hint), Vector2(640, 690), 15, WHITE)
 
 func draw_sky() -> void:
 	var light: float = game.daylight()
@@ -349,14 +358,20 @@ func draw_lighting() -> void:
 				draw_rect(Rect2(p, Vector2.ONE * step), Color(0.025, 0.035, 0.07, (1 - light) * 0.92))
 
 func draw_target() -> void:
-	if game.ui.blocks_world(game.pointer):
+	if not game.pad.active and game.ui.blocks_world(game.pointer):
 		return
-	var c: Vector2i = game.cell_at(game.mouse_world())
+	var target: Vector2 = game.mouse_world()
+	var item: String = game.held_item()
+	if game.pad.active and (item in ["sword", "fishing_rod"] or Data.ITEMS[item].has("weapon")):
+		draw_arc(target, 6.0, 0.0, TAU, 16, INK, 4.0, true)
+		draw_arc(target, 6.0, 0.0, TAU, 16, WHITE, 1.6, true)
+		return
+	var c: Vector2i = game.cell_at(target)
 	if not game.world.valid(c) or not game.reachable(c):
 		return
 	var id: int = game.world.tile(c)
-	var ok: bool = game.can_mine(c) if game.held_item() == "pickaxe" else game.can_place(c, game.held_item())
-	if game.held_item() == "sword":
+	var ok: bool = game.can_mine(c) if item == "pickaxe" else game.can_place(c, item)
+	if item == "sword":
 		return
 	var rect := Rect2(Vector2(c) * Data.TILE, Vector2.ONE * Data.TILE)
 	var color: Color = MINT if ok else CORAL
@@ -466,7 +481,7 @@ func menu() -> void:
 	else:
 		button(Rect2(92, 414, 455, 58), "来了，开辟新世界  →", "new", 0, true)
 	button(Rect2(92, 545, 455, 44), "返回地牢模式", "leave")
-	text("A / D 移动    空格跳跃    鼠标挖掘与建造", Vector2(93, 631), 15, MUTED)
+	text(game.pad.text("A / D 移动    空格跳跃    鼠标挖掘与建造", "左摇杆移动 · {A} 跳跃 · 右摇杆瞄准 · {RT} 使用 · {LT} 放置"), Vector2(93, 631), 15, MUTED)
 	box(Rect2(853, 83, 349, 36), Color("263f40"), Color("72968a"), 18)
 	centered("全新模式 · 横版 2D 沙盒", Vector2(1028, 108), 17, MINT, true)
 	var p := Vector2(762, 559)
@@ -493,15 +508,15 @@ func hud() -> void:
 		text(part, Vector2(31, 180 + line * 24), 13, MUTED)
 		line += 1
 	box(Rect2(16, 242, 319, 51), Color(0.07, 0.13, 0.16, 0.88), EDGE)
-	text("神父到访 · 出生地附近 [E]" if game.merchant_present else "CTO 神父 · 每 5 个游戏日到访", Vector2(31, 264), 14, GOLD if game.merchant_present else MUTED, true)
+	text("神父到访 · 出生地附近 [%s]" % game.pad.key("X", "E") if game.merchant_present else "CTO 神父 · 每 5 个游戏日到访", Vector2(31, 264), 14, GOLD if game.merchant_present else MUTED, true)
 	text("本次库存已记录 · 击败怪物获得旧银币" if game.merchant_present else "第 %d 天到访 · 还需 %d 个游戏日" % [game.merchant_info.next_day, game.merchant_info.days], Vector2(31, 284), 11, MUTED)
 	box(Rect2(982, 14, 282, 141), Color(0.07, 0.13, 0.16, 0.93), EDGE, 9)
 	text(game.adventure.biome_name(), Vector2(997, 38), 15, WHITE, true)
 	text("深度 %d m" % maxi(0, int((game.player.y / Data.TILE - game.world.surface_at(game.cell_at(game.player).x)) * 2)), Vector2(1170, 38), 12, MUTED)
 	draw_map(Rect2(997, 50, 252, 81))
-	text("白点：你   金色：出生地   [M] 地图", Vector2(997, 147), 11, MUTED)
-	button(Rect2(1001, 167, 119, 32), "背包 · Tab", "inventory")
-	button(Rect2(1128, 167, 120, 32), "暂停 · Esc", "pause")
+	text("白点：你   金色：出生地   [%s] 地图" % game.pad.key("Back", "M"), Vector2(997, 147), 11, MUTED)
+	button(Rect2(1001, 167, 119, 32), "背包 · " + game.pad.key("Y", "Tab"), "inventory")
+	button(Rect2(1128, 167, 120, 32), "暂停 · " + game.pad.key("Start", "Esc"), "pause")
 	var item: String = game.held_item()
 	var name: String = Catalog.PICK_NAMES[game.pick_tier] if item == "pickaxe" else (["猎虫剑", "铜剑", "铁剑"][game.sword_tier] if item == "sword" else Data.ITEMS[item].name)
 	var help: String = "长按左键开采" if item == "pickaxe" else ("左键挥剑" if item == "sword" else ("H 快捷治疗" if item == "potion" else "右键放置"))
@@ -511,20 +526,43 @@ func hud() -> void:
 		help = "左键使用"
 	elif item == "hammer":
 		help = "左键回收背景墙"
+	if game.pad.active:
+		if item == "pickaxe":
+			help = game.pad.text("", "右摇杆瞄准 · 长按 {RT} 开采")
+		elif item == "potion":
+			help = "方向键 ↓ 快捷治疗"
+		elif item == "sword" or Data.ITEMS[item].has("weapon"):
+			help = game.pad.text("", "右摇杆瞄准 · {RT} 攻击")
+		elif item == "hammer":
+			help = game.pad.text("", "{RT} 回收背景墙 · {LT} 放置")
+		elif item == "fishing_rod":
+			help = game.pad.text("", "右摇杆瞄准 · {RT} 抛竿 / 收竿")
+		elif Data.ITEMS[item].has("use") or Data.ITEMS[item].has("summon"):
+			help = game.pad.text("", "{RT} 使用")
+		else:
+			help = game.pad.text("", "右摇杆选位置 · {LT} 放置")
 	centered(name + "  ·  " + help, Vector2(640, 612), 16, WHITE, true)
 	for i in range(game.hotbar.size()):
 		var rect := Rect2(330 + i * 62, 627, 56, 57)
 		var active: bool = game.selected == i
 		box(rect, Color("3a5147") if active else INK, GOLD if active else EDGE, 6)
-		text(str((i + 1) % 10), rect.position + Vector2(5, 14), 11, GOLD if active else MUTED)
+		if not game.pad.active:
+			text(str((i + 1) % 10), rect.position + Vector2(5, 14), 11, GOLD if active else MUTED)
 		var id: String = game.hotbar[i]
 		icon(id, rect.position + Vector2(29, 27), 29, Color.WHITE if game.count_item(id) > 0 else Color(1, 1, 1, 0.23))
 		if id not in ["pickaxe", "sword"]:
 			text(str(game.count_item(id)), rect.position + Vector2(32, 50), 12, WHITE)
 		buttons.append({"rect":rect, "action":"slot", "index":i, "state":game.state})
-	text("A / D 移动   空格跳跃   S 下穿   Q 钩爪   E 交互   H 治疗   R 回家   F1 指南", Vector2(22, 708), 12, Color("c4d4cc"))
+	if game.pad.active and game.state == "playing":
+		var hint: String = game.pad.text("", "左摇杆移动 / 下穿 · {A} 跳跃 · {X} 交互 · {B} 钩爪 · {LB}/{RB} 切换物品 · ↓ 治疗 · {R3} 回家")
+		var width: float = game.bold.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+		box(Rect2(12, 689, width + 20, 26), Color(0.07, 0.13, 0.16, 0.93), EDGE, 7)
+		text(hint, Vector2(22, 707), 13, WHITE, true)
+	elif not game.pad.active:
+		text("A / D 移动   空格跳跃   S 下穿   Q 钩爪   E 交互   H 治疗   R 回家   F1 指南", Vector2(22, 708), 12, Color("c4d4cc"))
 	var saved: String = "已保存 " + game.last_saved if not game.last_saved.is_empty() else ("存档已读取" if game.save_available else "尚未保存")
-	text("旧银币 %d  ·  %s" % [game.count_item("coin"), "保存失败 · F5 重试" if not game.save_error.is_empty() else saved], Vector2(1000, 706), 12, CORAL if not game.save_error.is_empty() else MUTED)
+	var retry: String = game.pad.text("保存失败 · F5 重试", "保存失败 · 暂停菜单重试")
+	text("旧银币 %d  ·  %s" % [game.count_item("coin"), retry if not game.save_error.is_empty() else saved], Vector2(1000, 706), 12, CORAL if not game.save_error.is_empty() else MUTED)
 	detail.hud()
 
 func scrim() -> void:
@@ -602,7 +640,7 @@ func review_panel() -> void:
 	text("最多配错 6 次。过关免费任选一件。", Vector2(880, 437), 13, GOLD)
 	text("“别把同一个 Bug", Vector2(880, 493), 18, WHITE)
 	text("Review 两遍。”", Vector2(880, 523), 18, WHITE)
-	text("游戏世界暂停 · Esc 返回商店 · 每次神父到访可领取一次奖励", Vector2(129, 621), 15, MUTED)
+	text("游戏世界暂停 · %s 返回商店 · 每次神父到访可领取一次奖励" % game.pad.key("B", "Esc"), Vector2(129, 621), 15, MUTED)
 
 func map_panel() -> void:
 	scrim()
@@ -611,7 +649,7 @@ func map_panel() -> void:
 	text("种子 %d · 未探索地区保留迷雾" % game.world.seed_value, Vector2(124, 179), 16, MUTED)
 	draw_map(Rect2(122, 216, 1036, 345), true)
 	text("白点：毅川   金色：出生地   琥珀色：神父", Vector2(124, 594), 14, MUTED)
-	button(Rect2(1040, 118, 116, 35), "关闭 · M", "resume")
+	button(Rect2(1040, 118, 116, 35), "关闭 · " + game.pad.key("B", "M"), "resume")
 
 func guide() -> void:
 	scrim()
@@ -630,6 +668,15 @@ func guide() -> void:
 		"CTO 神父每 5 个游戏日到访一次，E 交易；Code Review 可赢一件物资。",
 		"M 地图，R 回家，H 治疗；F5 保存，Esc 暂停。30 秒自动保存。"
 	]
+	if game.pad.active:
+		entries[0] = game.pad.text("", "左摇杆移动、攀爬与下穿平台，{A} 跳跃。")
+		entries[1] = game.pad.text("", "右摇杆瞄准，推得越远瞄得越远；{RT} 采掘，{LT} 建造，{LB}/{RB} 切换物品。")
+		entries[2] = game.pad.text("", "{Y} 打开制作背包，用方向键切换选项，{A} 确认，{B} 返回。")
+		entries[5] = game.pad.text("", "{L3} 检查住房；{X} 开门、开箱、交谈、采药，合格住宅的床可设重生点。")
+		entries[6] = game.pad.text("", "装备护甲和饰品；{B} 发射钩爪。弓枪耗弹药，法杖耗魔力。")
+		entries[7] = "方向键 ↑ 查看 Boss 成长；召唤物受前置、区域和昼夜条件限制。"
+		entries[9] = game.pad.text("", "CTO 神父每 5 个游戏日到访一次，{X} 交易；Code Review 可赢一件物资。")
+		entries[10] = game.pad.text("", "{Back} 地图，{R3} 回家，方向键 ↓ 治疗；{Start} 暂停并保存。30 秒自动保存。")
 	for index in range(entries.size()):
 		text(entries[index], Vector2(216, 163 + index * 35), 17, MUTED)
 	button(Rect2(833, 593, 228, 39), "明白了，继续探索", "resume", 0, true)
@@ -640,7 +687,7 @@ func pause_panel() -> void:
 	centered("歇一会儿", Vector2(640, 189), 34, WHITE, true)
 	centered("世界已暂停。", Vector2(640, 223), 16, MUTED)
 	button(Rect2(453, 252, 374, 49), "继续探索", "resume", 0, true)
-	button(Rect2(453, 314, 374, 45), "保存世界 · F5", "save")
+	button(Rect2(453, 314, 374, 45), game.pad.text("保存世界 · F5", "保存世界"), "save")
 	button(Rect2(453, 371, 374, 45), "游玩指南", "guide")
 	button(Rect2(453, 428, 374, 45), "保存并返回模式主页", "menu")
 	button(Rect2(453, 485, 374, 45), "保存并返回地牢模式", "leave")
@@ -653,6 +700,9 @@ func modal(title: String, body: String, label: String, action: String) -> void:
 	button(Rect2(472, 362, 336, 46), label, action, 0, true)
 	if game.state in ["confirm", "recall"]:
 		button(Rect2(472, 425, 336, 39), "再想想", "cancel")
+
+func menu_entries() -> Array[Dictionary]:
+	return buttons.filter(func(entry: Dictionary) -> bool: return entry.state == game.state)
 
 func click(p: Vector2) -> bool:
 	for entry in buttons.duplicate():

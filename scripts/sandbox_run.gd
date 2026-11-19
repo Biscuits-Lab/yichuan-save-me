@@ -6,7 +6,13 @@ const Atlas = preload("res://scripts/sprite_atlas.gd")
 const Catalog = preload("res://scripts/sandbox_catalog.gd")
 const Adventure = preload("res://scripts/sandbox_adventure.gd")
 const Audio = preload("res://scripts/audio.gd")
+const Gamepad = preload("res://scripts/gamepad.gd")
 const REACH: float = 132.0
+var pad := Gamepad.new()
+var pad_aim := Vector2.ZERO
+var pad_jump_blocked: bool = false
+var pad_use_blocked: bool = false
+var pad_place_blocked: bool = false
 var world := Data.new()
 var state: String = "menu"
 var player := Vector2.ZERO # Feet position, in world pixels.
@@ -92,6 +98,7 @@ func _ready() -> void:
 	adventure = Adventure.new(self)
 	audio = Audio.new()
 	add_child(audio)
+	add_child(pad)
 	setup_input()
 	pointer = get_viewport().get_mouse_position()
 	camera = Camera2D.new()
@@ -134,6 +141,17 @@ func setup_input() -> void:
 				var key := InputEventKey.new()
 				key.physical_keycode = code
 				InputMap.action_add_event(binding.id, key)
+	for action in ["sandbox_left", "sandbox_right", "sandbox_down"]:
+		InputMap.action_set_deadzone(action, 0.26)
+	pad.bind_axis("sandbox_left", JOY_AXIS_LEFT_X, -1.0)
+	pad.bind_axis("sandbox_right", JOY_AXIS_LEFT_X, 1.0)
+	pad.bind_axis("sandbox_climb_up", JOY_AXIS_LEFT_Y, -1.0)
+	pad.bind_axis("sandbox_down", JOY_AXIS_LEFT_Y, 1.0)
+	pad.bind_button("sandbox_left", JOY_BUTTON_DPAD_LEFT)
+	pad.bind_button("sandbox_right", JOY_BUTTON_DPAD_RIGHT)
+	pad.bind_button("sandbox_jump", JOY_BUTTON_A)
+	pad.bind_axis("sandbox_use", JOY_AXIS_TRIGGER_RIGHT, 1.0)
+	pad.bind_axis("sandbox_place", JOY_AXIS_TRIGGER_LEFT, 1.0)
 
 func start_world(chosen_seed: int = 0) -> void:
 	world.generate(chosen_seed if chosen_seed != 0 else rng.randi_range(1, 99999999))
@@ -168,6 +186,9 @@ func start_world(chosen_seed: int = 0) -> void:
 	save_world()
 
 func reset_transients() -> void:
+	pad.stop_rumble()
+	pad_aim = Vector2.ZERO
+	block_held_triggers()
 	velocity = Vector2.ZERO
 	grounded = false
 	coyote = 0.0
@@ -239,7 +260,31 @@ func cell_center(c: Vector2i) -> Vector2:
 	return (Vector2(c) + Vector2.ONE * 0.5) * Data.TILE
 
 func mouse_world() -> Vector2:
+	if pad.active:
+		var offset: Vector2 = Vector2(facing * 54.0, 0.0)
+		if not pad_aim.is_zero_approx():
+			var max_distance: float = 305.0 if held_item() == "fishing_rod" else REACH - 18.0
+			offset = pad_aim.normalized() * lerpf(22.0, max_distance, pad_aim.length())
+		return player - Vector2(0, 20) + offset
 	return get_viewport().get_canvas_transform().affine_inverse() * pointer
+
+func update_pad_aim() -> void:
+	if not pad.active:
+		return
+	var stick := Vector2(Input.get_joy_axis(pad.device, JOY_AXIS_RIGHT_X), Input.get_joy_axis(pad.device, JOY_AXIS_RIGHT_Y))
+	if stick.length() >= 0.24:
+		var strength: float = maxf(0.01, inverse_lerp(0.24, 1.0, minf(1.0, stick.length())))
+		pad_aim = stick.normalized() * strength
+
+func block_held_triggers() -> void:
+	pad_use_blocked = Input.is_action_pressed("sandbox_use")
+	pad_place_blocked = Input.is_action_pressed("sandbox_place")
+
+func jump_held() -> bool:
+	return Input.is_action_pressed("sandbox_jump") and (not pad.active or not pad_jump_blocked)
+
+func jump_pressed() -> bool:
+	return Input.is_action_just_pressed("sandbox_jump") and (not pad.active or not pad_jump_blocked)
 
 func body_free(p: Vector2, half_width: float = 8.0, height: float = 36.0, ignore_platforms: bool = false) -> bool:
 	var first: Vector2i = cell_at(p + Vector2(-half_width, -height))
@@ -487,6 +532,9 @@ func hurt(amount: float, source: Vector2) -> void:
 	if health <= 0:
 		set_state("dead")
 		audio.sfx("dead")
+		pad.pulse("death")
+	else:
+		pad.pulse("hurt", clampf(0.45 + amount / max_health(), 0.0, 1.0))
 
 func nearby_surface(anchor: Vector2, radius: int = 32) -> Vector2:
 	var best := Vector2.INF
@@ -735,7 +783,7 @@ func _physics_process(delta: float) -> void:
 	velocity.x = move_toward(velocity.x, horizontal * speed, (1900.0 if grounded else 1000.0) * delta)
 	if horizontal != 0:
 		facing = signf(horizontal)
-	if Input.is_action_just_pressed("sandbox_jump"):
+	if jump_pressed():
 		jump_buffer = 0.14
 	if jump_buffer > 0 and coyote > 0:
 		velocity.y = -490.0
@@ -743,7 +791,7 @@ func _physics_process(delta: float) -> void:
 		coyote = 0.0
 		grounded = false
 		audio.sfx("jump")
-	if not Input.is_action_pressed("sandbox_jump") and velocity.y < -200:
+	if not jump_held() and velocity.y < -200:
 		velocity.y = move_toward(velocity.y, -200.0, 1900.0 * delta)
 	velocity.y = minf(900, velocity.y + 1350 * delta)
 	adventure.adjust_motion(delta)
@@ -759,6 +807,7 @@ func _physics_process(delta: float) -> void:
 		hurt((falling_speed - 660) * 0.12, player + Vector2(0, 10))
 	if heal_delay <= 0:
 		health = minf(max_health(), health + delta * (3.0 if near_station(Data.Block.CAMPFIRE) else (2.0 if near_station(Data.Block.BENCH) else 0.35)))
+	update_pad_aim()
 	update_tools(delta)
 	if state != "playing":
 		return
@@ -795,15 +844,24 @@ func _physics_process(delta: float) -> void:
 
 func update_tools(delta: float) -> void:
 	var target: Vector2i = cell_at(mouse_world())
-	if left_held and not ui.blocks_world(pointer):
+	var use_trigger: bool = Input.is_action_pressed("sandbox_use")
+	var place_trigger: bool = Input.is_action_pressed("sandbox_place")
+	pad_use_blocked = pad_use_blocked and use_trigger
+	pad_place_blocked = pad_place_blocked and place_trigger
+	var using_tool: bool = use_trigger and not pad_use_blocked if pad.active else left_held and not ui.blocks_world(pointer)
+	var placing: bool = place_trigger and not pad_place_blocked if pad.active else right_held and not ui.blocks_world(pointer)
+	if using_tool:
 		if Data.ITEMS[held_item()].has("weapon"):
 			adventure.fire_weapon(held_item())
 		elif held_item() == "fishing_rod":
-			if sword_cooldown <= 0:
+			if sword_cooldown <= 0 and (not pad.active or Input.is_action_just_pressed("sandbox_use")):
 				adventure.use_item(held_item())
 				sword_cooldown = 0.25
 			left_held = false
 		elif held_item() == "sword":
+			var side: float = mouse_world().x - player.x
+			if pad.active and absf(side) > 1.0:
+				facing = signf(side)
 			attack()
 		elif held_item() == "hammer":
 			adventure.structures.take_wall(target)
@@ -824,7 +882,7 @@ func update_tools(delta: float) -> void:
 			mining_progress = 0.0
 	else:
 		mining_progress = 0.0
-	if right_held and place_cooldown <= 0 and not ui.blocks_world(pointer):
+	if placing and place_cooldown <= 0:
 		if place(target):
 			place_cooldown = 0.15
 
@@ -841,6 +899,9 @@ func notify(value: String) -> void:
 
 func set_state(value: String) -> void:
 	state = value
+	block_held_triggers()
+	if state != "playing":
+		pad.stop_combat_rumble()
 	left_held = false
 	right_held = false
 	mining_progress = 0.0
@@ -1032,6 +1093,14 @@ func _notification(what: int) -> void:
 		set_state("paused")
 
 func _unhandled_input(event: InputEvent) -> void:
+	var pad_was_active: bool = pad.active
+	pad.observe(event)
+	if event is InputEventJoypadButton or event is InputEventJoypadMotion:
+		if not pad_was_active and pad.active:
+			left_held = false
+			right_held = false
+		gamepad_input(event)
+		return
 	if event is InputEventMouseMotion:
 		pointer = event.position
 		return
@@ -1048,7 +1117,48 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
-	var code: int = event.keycode
+	keyboard_shortcut(event.keycode)
+
+func gamepad_input(event: InputEvent) -> void:
+	if event.device != pad.device or not pad.active:
+		return
+	var direction: Vector2 = pad.menu_direction(event)
+	if state != "playing" and not direction.is_zero_approx():
+		pad.move_focus(ui.menu_entries(), state, direction)
+	if not event is InputEventJoypadButton or not event.pressed:
+		return
+	if event.button_index == JOY_BUTTON_A:
+		pad_jump_blocked = state != "playing"
+	if state != "playing":
+		match event.button_index:
+			JOY_BUTTON_A:
+				var focus: Dictionary = pad.focused(ui.menu_entries(), state)
+				if not focus.is_empty() and focus.state == state:
+					ui.click(focus.rect.get_center())
+			JOY_BUTTON_B: keyboard_shortcut(KEY_ESCAPE)
+			JOY_BUTTON_START:
+				if state == "paused":
+					set_state("playing")
+			JOY_BUTTON_Y:
+				if state == "inventory":
+					set_state("playing")
+		return
+	match event.button_index:
+		JOY_BUTTON_B:
+			update_pad_aim()
+			adventure.hook_action()
+		JOY_BUTTON_X: interact()
+		JOY_BUTTON_Y: set_state("inventory")
+		JOY_BUTTON_START: set_state("paused")
+		JOY_BUTTON_BACK: set_state("map")
+		JOY_BUTTON_DPAD_UP: set_state("journal")
+		JOY_BUTTON_DPAD_DOWN: heal()
+		JOY_BUTTON_LEFT_STICK: keyboard_shortcut(KEY_F7)
+		JOY_BUTTON_RIGHT_STICK: set_state("recall")
+		JOY_BUTTON_LEFT_SHOULDER: selected = posmod(selected - 1, hotbar.size())
+		JOY_BUTTON_RIGHT_SHOULDER: selected = posmod(selected + 1, hotbar.size())
+
+func keyboard_shortcut(code: int) -> void:
 	if code == KEY_F11:
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else DisplayServer.WINDOW_MODE_FULLSCREEN)
 	elif code == KEY_F3:

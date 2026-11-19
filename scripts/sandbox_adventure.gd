@@ -228,6 +228,7 @@ func enemy_died(enemy: Dictionary) -> void:
 	bestiary[enemy.kind] = int(bestiary.get(enemy.kind,0)) + 1
 	game.stats.kills = int(game.stats.get("kills",0)) + 1
 	game.add_item("coin",game.rng.randi_range(3,7) if enemy.boss_index < 0 else 80 + enemy.boss_index * 35)
+	game.pad.pulse("victory" if enemy.boss_index >= 0 else "kill")
 	if enemy.boss_index >= 0:
 		var spec: Dictionary = Catalog.BOSSES[enemy.boss_index]
 		var first_victory: bool = not bosses.get(spec.id,false)
@@ -391,11 +392,17 @@ func update_boss(enemy: Dictionary, delta: float) -> void:
 		enemy.windup = 0.7
 		enemy.aim = (game.player - Vector2(0,20) - enemy.p).normalized()
 		enemy.timer = 2.1 - phase * 0.5
+		if pattern in ["eye", "worm", "sumo", "wall", "final"]:
+			boss_rumble("windup", enemy.p)
 
 func boss_attack(enemy: Dictionary, phase: int) -> void:
 	enemy.attack += 1
 	var pattern: String = enemy.spec.pattern
 	var count: int = 8 + phase * 4
+	match pattern:
+		"eye", "worm", "sumo": boss_rumble("charge", enemy.p)
+		"slime", "plant": boss_rumble("summon", enemy.p)
+		"wall", "machine", "final": boss_rumble("volley", enemy.p)
 	if pattern in ["eye","worm","sumo"]:
 		enemy.charge = 0.5
 		for i in range(5 + phase * 2):
@@ -413,7 +420,12 @@ func boss_attack(enemy: Dictionary, phase: int) -> void:
 			spawn("minislime" if pattern == "slime" else "leak",enemy.p + Vector2(side * 55,0))
 	if pattern in ["sumo","wall","final"]:
 		for offset in [-70,0,70]:
-			hazards.append({"p":game.player + Vector2(offset,0),"delay":0.8,"life":0.45,"damage":float(enemy.spec.damage),"radius":45.0})
+			hazards.append({"p":game.player + Vector2(offset,0),"delay":0.8,"life":0.45,"damage":float(enemy.spec.damage),"radius":45.0,"boss":true})
+
+func boss_rumble(kind: String, p: Vector2) -> void:
+	var distance: float = game.player.distance_to(p)
+	if distance < 800.0:
+		game.pad.pulse(kind, remap(maxf(85.0, distance), 85.0, 800.0, 1.0, 0.35))
 
 func shoot(p: Vector2, velocity: Vector2, damage: float, friendly: bool, options: Dictionary = {}) -> void:
 	if shots.size() >= 220:
@@ -499,8 +511,11 @@ func update_shots(delta: float) -> void:
 		if removed or shot.life <= 0:
 			shots.erase(shot)
 	for hazard in hazards.duplicate():
+		var activates: bool = hazard.delay > 0.0 and hazard.delay <= delta
 		hazard.delay -= delta
 		if hazard.delay <= 0:
+			if activates and hazard.get("boss", false) and game.player.distance_to(hazard.p) < 240.0:
+				boss_rumble("slam", hazard.p)
 			hazard.life -= delta
 			if absf(game.player.x - hazard.p.x) < hazard.radius and absf(game.player.y - hazard.p.y) < 70:
 				game.hurt(hazard.damage,hazard.p)
@@ -648,19 +663,20 @@ func adjust_motion(delta: float) -> void:
 			game.jump_buffer = 0
 			air_jumps += 1
 			hook = Vector2.INF
-	if has_accessory("wings") and not game.grounded and Input.is_action_pressed("sandbox_jump") and flight > 0:
+	if has_accessory("wings") and not game.grounded and game.jump_held() and flight > 0:
 		flight -= delta
 		game.velocity.y = move_toward(game.velocity.y,-260,1800 * delta)
 	if game.world.tile(c) == Data.Block.ROPE:
-		game.velocity.y = Input.get_axis("sandbox_jump","sandbox_down") * 135
+		var climb_up: float = maxf(float(game.jump_held()), Input.get_action_strength("sandbox_climb_up"))
+		game.velocity.y = (Input.get_action_strength("sandbox_down") - climb_up) * 135
 	if hook.is_finite():
-		if Input.is_action_just_pressed("sandbox_jump") or game.player.distance_to(hook) < 26:
+		if game.jump_pressed() or game.player.distance_to(hook) < 26:
 			hook = Vector2.INF
 		else:
 			game.velocity = (hook - game.player + Vector2(0,20)).normalized() * 610
 	if structures.fluid(c).y > 4:
 		game.velocity *= Vector2(0.97,0.92)
-		if Input.is_action_pressed("sandbox_jump"):
+		if game.jump_held():
 			game.velocity.y = -175
 
 func tick(delta: float) -> void:

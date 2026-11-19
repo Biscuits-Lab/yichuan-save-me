@@ -150,7 +150,7 @@ func actors() -> void:
 			g.adventure.atlases.cast.draw(v,{"guide":8,"nurse":0,"miner":6}[npc.id],npc.p,46)
 		v.world_label(names[npc.id],npc.p - Vector2(0,59),v.MINT)
 		if npc.p.distance_to(g.player) < 72:
-			v.world_label("[E] 交谈",npc.p - Vector2(0,42),v.WHITE)
+			v.world_label("[%s] 交谈" % g.pad.key("X", "E"),npc.p - Vector2(0,42),v.WHITE)
 	if g.adventure.companion:
 		var p: Vector2 = g.adventure.companion_p
 		g.adventure.atlases.heide.draw(v,int(g.visual_clock * 7) % 8,p,44,1 if p.x < g.player.x else -1)
@@ -174,7 +174,7 @@ func actors() -> void:
 		v.draw_line(g.player - Vector2(0,25),p,Color(0.9,0.9,0.8,0.7),1)
 		v.draw_circle(p,3,v.CORAL)
 		if fishing.time >= fishing.bite:
-			v.world_label("! 咬钩了 · 左键收竿",p - Vector2(0,24),v.GOLD)
+			v.world_label(g.pad.text("! 咬钩了 · 左键收竿", "! 咬钩了 · {RT} 收竿"),p - Vector2(0,24),v.GOLD)
 
 func hud() -> void:
 	v.draw_rect(Rect2(32,100,210,5),Color("334355"))
@@ -185,8 +185,8 @@ func hud() -> void:
 	v.box(Rect2(16,305,319,92),Color(0.07,0.13,0.16,0.88),v.EDGE)
 	v.text("%s · Boss %d / 8" % ["困难世界" if g.adventure.hardmode() else "探索世界",g.adventure.stage()],Vector2(31,330),16,v.GOLD,true)
 	v.text("护甲 %d   饰品 %d / 5   生命强化 %d" % [g.adventure.defense(),g.adventure.accessories.size(),g.adventure.life_upgrades],Vector2(31,357),12,v.MUTED)
-	v.button(Rect2(31,365,140,24),"成长 / 图鉴 · T","journal")
-	v.button(Rect2(183,365,135,24),"检查住房 · F7","house_check")
+	v.button(Rect2(31,365,140,24),"成长 / 图鉴 · " + g.pad.key("↑", "T"),"journal")
+	v.button(Rect2(183,365,135,24),"检查住房 · " + g.pad.key("L3", "F7"),"house_check")
 	var boss: Dictionary = g.adventure.current_boss()
 	if not boss.is_empty():
 		v.box(Rect2(370,17,566,51),v.INK,v.CORAL)

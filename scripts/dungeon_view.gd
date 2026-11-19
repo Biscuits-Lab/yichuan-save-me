@@ -93,6 +93,15 @@ func _draw() -> void:
 		"paused", "dead", "won": ending_panel()
 		"guide": guide()
 		"cheats": cheats()
+	if game.pad.active and game.state not in ["playing", "ruoyu_unseal"]:
+		var focus: Dictionary = game.pad.focused(menu_entries(), menu_context())
+		if not focus.is_empty():
+			draw_rect(focus.rect.grow(3), GOLD, false, 2.0)
+			if game.state not in ["title", "dialogue", "inventory"]:
+				var hint: String = "方向键选择 · {A} 确认"
+				if game.state not in ["skill", "dead", "won"]:
+					hint += " · {B} 返回"
+				center(game.pad.text("", hint), Vector2(640, 666), 14, MUTED)
 	if game.message_time > 0 and game.state not in ["title", "ruoyu_unseal"]:
 		var width: float = minf(1120, game.font.get_string_size(game.message, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 44)
 		box(Rect2(640 - width / 2, 675, width, 32), Color("263d3a"), MINT, 8)
@@ -165,11 +174,11 @@ func speech_bubble(value: String, anchor: Vector2, bounds: Rect2, gap: float, ac
 	draw_multiline_string(font, rect.position + Vector2(12, 7 + font.get_ascent(font_size)), value, HORIZONTAL_ALIGNMENT_LEFT, text_width, font_size, -1, WHITE, flags)
 
 func button(rect: Rect2, label: String, action: String, index: int = 0, primary: bool = false, enabled: bool = true) -> void:
-	var hover: bool = rect.has_point(get_global_mouse_position()) and enabled
+	var hover: bool = not game.pad.active and rect.has_point(get_global_mouse_position()) and enabled
 	box(rect, (MINT.lightened(0.12) if hover else MINT) if primary and enabled else (Color("2a4048") if hover else PANEL), MINT if hover or primary and enabled else LINE, 8)
 	center(label, rect.get_center() + Vector2(0, 7), 18, BG if primary and enabled else (WHITE if enabled else MUTED), primary)
 	if enabled:
-		buttons.append({"rect":rect, "action":action, "index":index, "state":game.state})
+		buttons.append({"rect":rect, "action":action, "index":index, "state":game.state, "primary":primary})
 
 func scrim() -> void:
 	draw_rect(Rect2(0, 0, 1280, 720), Color(0.035, 0.065, 0.085, 0.91))
@@ -699,7 +708,7 @@ func title_screen() -> void:
 		center(game.Data.DIFFICULTIES[i].name, rect.get_center() + Vector2(0, 6), 16, GOLD if game.difficulty == i else MUTED)
 		buttons.append({"rect":rect, "action":"difficulty", "index":i, "state":game.state})
 	button(Rect2(68, 602, 316, 58), "来了，去救公主  →", "start", 0, true)
-	button(Rect2(399, 602, 174, 58), "游玩指南 · F1", "guide")
+	button(Rect2(399, 602, 174, 58), "游玩指南 · " + game.pad.key("LB", "F1"), "guide")
 	# A staged illustration communicates the new perspective before the run.
 	box(Rect2(630, 111, 580, 494), Color("1b2b31"), Color("41574e"), 28)
 	tiles(Rect2(648, 130, 544, 456), 0, 128)
@@ -716,9 +725,9 @@ func title_screen() -> void:
 	for i in range(3):
 		stamp(7, Vector2(744 + i * 124, 536), Vector2.ONE * 13)
 	micro("MOVE. AUTO ATTACK. FUSE. RESCUE.", Vector2(667, 577), MUTED, 8)
-	button(Rect2(648, 611, 544, 49), "像素旷野 · 2D 沙盒生存  →  B", "sandbox")
+	button(Rect2(648, 611, 544, 49), "像素旷野 · 2D 沙盒生存  →  " + game.pad.key("Y", "B"), "sandbox")
 	draw_line(Vector2(68, 685), Vector2(1210, 685), LINE)
-	text("WASD 移动 / 自动攻击 / 空格冲刺", Vector2(68, 708), 14, MUTED)
+	text(game.pad.text("WASD 移动 / 自动攻击 / 空格冲刺", "方向键或左摇杆选择 · {A} 确认"), Vector2(68, 708), 14, MUTED)
 	text("最高累计字节 %d  ·  通关层数 %d / %d" % [game.best_score, game.best_floor, game.Data.FLOOR_COUNT], Vector2(884, 708), 14, MUTED)
 
 func arena() -> void:
@@ -733,7 +742,7 @@ func arena() -> void:
 			npc_art(room.npc, p)
 			center(game.Data.NPCS[room.npc].name, p + Vector2(0, 22), 14, game.Data.NPCS[room.npc].color, true)
 			if room.id == game.room_id and game.player.distance_to(p) < 72:
-				text("E", p + Vector2(-5, -80), 17, WHITE, true)
+				center(game.pad.key("X", "E"), p + Vector2(0, -80), 17, WHITE, true)
 	for rect in game.broken_obstacles:
 		if visible_world.intersects(rect.grow(50)):
 			cover_art(rect, true)
@@ -872,20 +881,21 @@ func terminal(room: Dictionary) -> void:
 	if room.type == "boss" and not room.cleared:
 		return
 	var p: Vector2 = room.center
-	var label: String = "E 补给"
+	var key: String = game.pad.key("X", "E")
+	var label: String = key + " 补给"
 	var prop: int = 10
 	match room.type:
 		"boss":
-			label = "E 技能提升"
+			label = key + " 技能提升"
 			stamp(6, p, Vector2.ONE * 96, game.clock * 0.2)
 			prop = -1
 		"treasure":
-			label = "已开启" if room.used else "E 宝箱"
+			label = "已开启" if room.used else key + " 宝箱"
 			prop = 9 if room.used else 8
 		"rest":
-			label = "已休息" if room.used else "E 休息"
+			label = "已休息" if room.used else key + " 休息"
 			prop = 11
-		"shop": label = "E 商店"
+		"shop": label = key + " 商店"
 	if prop >= 0:
 		shadow(p + Vector2(0, 10), 30)
 		sprite(game.environment_atlas, prop, p + Vector2(0, 6), 66)
@@ -948,7 +958,7 @@ func hud() -> void:
 	center(floor_label, Vector2(640, 61), 13, game.Data.FLOOR_COLORS[game.floor_index])
 	if game.onion_skill:
 		box(Rect2(343, 652, 48, 42), Color(0.055, 0.09, 0.12, 0.83), GOLD, 9)
-		center("Q" if game.onion_cooldown <= 0 else str(ceili(game.onion_cooldown)), Vector2(367, 680), 20, GOLD)
+		center(game.pad.key("Y", "Q") if game.onion_cooldown <= 0 else str(ceili(game.onion_cooldown)), Vector2(367, 680), 20, GOLD)
 	var turret_x: float = 24.0
 	for id in game.Data.TURRETS:
 		if game.equipment_count(id) == 0:
@@ -957,8 +967,13 @@ func hud() -> void:
 		var tint: Color = game.Data.item(id).color
 		box(Rect2(turret_x, 652, 76, 42), Color(0.055, 0.09, 0.12, 0.83), tint.darkened(0.4) if cooldown > 0 else tint, 9)
 		item_icon(id, Vector2(turret_x + 20, 673), 0.51)
-		center("F" if cooldown <= 0 else "%d秒" % ceili(cooldown), Vector2(turret_x + 54, 679), 15, tint)
+		center(game.pad.key("RB", "F") if cooldown <= 0 else "%d秒" % ceili(cooldown), Vector2(turret_x + 54, 679), 15, tint)
 		turret_x += 84.0
+	if game.pad.active:
+		var hint: String = game.pad.text("", "左摇杆 移动 · {A} 冲刺 · {X} 交互 · {Start} 背包 · {LB} 指南")
+		var width: float = game.font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+		box(Rect2(12, 689, width + 20, 26), Color(0.055, 0.09, 0.12, 0.90), LINE, 7)
+		text(hint, Vector2(22, 708), 14, WHITE)
 	if game.assisted:
 		micro("DEBUG", Vector2(267, 42), RED, 8)
 	for enemy in game.enemies:
@@ -1016,8 +1031,8 @@ func story() -> void:
 		hero(Vector2(201, 603), 1.4)
 	text(line.speaker, Vector2(287, 490), 23, MINT, true)
 	speech_bubble(line.line, Vector2(201, 546), Rect2(278, 504, 846, 90), 88.0, MINT, 806.0, 22)
-	button(Rect2(921, 602, 219, 36), "继续 · Enter / E", "dialogue", 0, true)
-	text("Esc 跳过这段剧情", Vector2(288, 629), 14, MUTED)
+	button(Rect2(921, 602, 219, 36), "继续 · " + game.pad.key("A", "Enter / E"), "dialogue", 0, true)
+	text(game.pad.key("B", "Esc") + " 跳过这段剧情", Vector2(288, 629), 14, MUTED)
 
 func shop() -> void:
 	scrim()
@@ -1051,9 +1066,10 @@ func shop() -> void:
 			paragraph(spec.desc, rect.position + Vector2(18, 226), 214, 15, MUTED, 2)
 		button(Rect2(rect.position + Vector2(16, 259), Vector2(218, 35)), "已购入" if offer.sold else "购买 · %d 字节" % game.shop_price(offer), "buy", i, not offer.sold, not offer.sold)
 	var refresh_cost: int = game.refresh_price()
-	button(Rect2(117, 547, 270, 49), "首次免费刷新 · R" if refresh_cost == 0 else "刷新 · %d 字节 / R" % refresh_cost, "refresh", 0, refresh_cost == 0)
-	button(Rect2(407, 547, 270, 49), "整理背包 / 合并 · Tab", "inventory")
-	button(Rect2(884, 547, 280, 49), "继续探索 · Esc", "close_shop", 0, true)
+	var refresh_key: String = game.pad.key("Y", "R")
+	button(Rect2(117, 547, 270, 49), "首次免费刷新 · " + refresh_key if refresh_cost == 0 else "刷新 · %d 字节 / %s" % [refresh_cost, refresh_key], "refresh", 0, refresh_cost == 0)
+	button(Rect2(407, 547, 270, 49), "整理背包 / 合并 · " + game.pad.key("Start", "Tab"), "inventory")
+	button(Rect2(884, 547, 280, 49), "继续探索 · " + game.pad.key("B", "Esc"), "close_shop", 0, true)
 	text("清房 %d · 物价 +%.1f%% · 每清房 +5%% / 每换层 ×1.15 · 四格随机供货" % [game.cleared_count, (game.price_scale() - 1) * 100], Vector2(117, 624), 16, MUTED)
 
 func skill_reward() -> void:
@@ -1069,7 +1085,7 @@ func skill_reward() -> void:
 		center(spec.name, rect.position + Vector2(156, 156), 28, WHITE, true)
 		center("Lv.%d → Lv.%d" % [level, level + 1], rect.position + Vector2(156, 190), 18, GOLD)
 		paragraph(spec.desc, rect.position + Vector2(24, 228), 264, 18, MUTED, 3)
-		button(Rect2(rect.position + Vector2(24, 281), Vector2(264, 39)), "选择 · %d" % (i + 1), "skill_choice", i, true)
+		button(Rect2(rect.position + Vector2(24, 281), Vector2(264, 39)), "选择" if game.pad.active else "选择 · %d" % (i + 1), "skill_choice", i, true)
 	center("选择后" + ("救回公主" if game.floor_index == game.Data.FLOOR_COUNT - 1 else "进入下一层"), Vector2(640, 618), 18, MUTED)
 
 func inventory() -> void:
@@ -1079,7 +1095,7 @@ func inventory() -> void:
 	text("%d 字节" % game.points, Vector2(946, 49), 17, MINT)
 	button(Rect2(1098, 23, 140, 39), "返回标题", "ask_title")
 	draw_line(Vector2(40, 78), Vector2(1238, 78), LINE, 1)
-	button(Rect2(606, 630, 146, 36), "返回游戏 · Esc", "inventory")
+	button(Rect2(606, 630, 146, 36), "返回 · " + game.pad.key("B", "Esc"), "inventory")
 	var pages: int = maxi(1, ceili(float(game.equipment.size()) / EQUIPMENT_PAGE_SIZE))
 	equipment_page = clampi(equipment_page, 0, pages - 1)
 	text("武器  %d / 6" % game.weapons.size(), Vector2(40, 113), 18, GOLD, true)
@@ -1101,7 +1117,7 @@ func inventory() -> void:
 		button(Rect2(526, 204, 68, 31), "上页", "equipment_page", -1, false, equipment_page > 0)
 		center("%d / %d" % [equipment_page + 1, pages], Vector2(634, 225), 14, MUTED)
 		button(Rect2(684, 204, 68, 31), "下页", "equipment_page", 1, false, equipment_page < pages - 1)
-	text("悬停 / 点击查看 · 右键合并 / 出售", Vector2(40, 653), 15, MUTED)
+	text(game.pad.text("悬停 / 点击查看 · 右键合并 / 出售", "方向键查看物品 · {X} 或 {A} 合并 / 出售 · {B} 返回"), Vector2(40, 653), 15, MUTED)
 	character_stats()
 	if game.state == "confirm_title":
 		buttons.clear()
@@ -1110,11 +1126,16 @@ func inventory() -> void:
 		box(Rect2(380, 243, 520, 220), PANEL, LINE, 14)
 		text("返回标题？", Vector2(408, 296), 26, WHITE, true)
 		text("返回后将结束本局，当前进度会丢失。", Vector2(408, 336), 17, MUTED)
-		button(Rect2(408, 382, 212, 48), "取消 · Esc", "cancel_title", 0, true)
+		button(Rect2(408, 382, 212, 48), "取消 · " + game.pad.key("B", "Esc"), "cancel_title", 0, true)
 		button(Rect2(636, 382, 236, 48), "确认返回标题", "confirm_title")
 		return
 	if not item_context.is_empty():
 		draw_item_context()
+		return
+	if game.pad.active:
+		var focus: Dictionary = game.pad.focused(menu_entries(), menu_context())
+		if focus.get("action") == "item" and valid_item_slot(focus):
+			show_item_at(focus, focus.rect.get_center())
 		return
 	var hovered: Dictionary = inventory_focus
 	for slot in item_slots:
@@ -1122,12 +1143,15 @@ func inventory() -> void:
 			hovered = slot
 			break
 	if not hovered.is_empty() and valid_item_slot(hovered):
-		var tip_x: float = pointer_position.x + 20 if pointer_position.x < 438 else pointer_position.x - 340
-		item_tooltip(hovered.entry, Vector2(tip_x, pointer_position.y + 20))
+		show_item_at(hovered, pointer_position)
+
+func show_item_at(slot: Dictionary, p: Vector2) -> void:
+	var tip_x: float = p.x + 20 if p.x < 438 else p.x - 340
+	item_tooltip(slot.entry, Vector2(tip_x, p.y + 20))
 
 func draw_inventory_item(rect: Rect2, kind: String, index: int, entry: Dictionary) -> void:
 	var color: Color = game.Data.TIER_COLORS[entry.tier - 1]
-	var hover: bool = rect.has_point(pointer_position)
+	var hover: bool = not game.pad.active and rect.has_point(pointer_position)
 	box(rect, color.darkened(0.68 if hover else 0.78), color if hover else color.darkened(0.35), 7)
 	item_icon(entry.id, rect.get_center() - Vector2(0, 2), 0.76)
 	if kind == "equipment":
@@ -1135,7 +1159,7 @@ func draw_inventory_item(rect: Rect2, kind: String, index: int, entry: Dictionar
 		text(count_text, rect.position + Vector2(61 - game.bold.get_string_size(count_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x, 15), 12, WHITE, true)
 	for pip in range(entry.tier):
 		draw_circle(rect.position + Vector2(23 + pip * 6, 57), 1.7, color)
-	item_slots.append({"rect":rect, "kind":kind, "index":index, "entry":entry})
+	item_slots.append({"rect":rect, "kind":kind, "index":index, "entry":entry, "action":"item", "primary":kind == "weapon" and index == 0})
 
 func character_stats() -> void:
 	box(Rect2(784, 94, 454, 572), BG, LINE, 9)
@@ -1219,9 +1243,9 @@ func treasure_reward() -> void:
 		center(spec.name, rect.position + Vector2(125, 172), 23, WHITE, true)
 		center(spec.tag, rect.position + Vector2(125, 207), 16, color)
 		var can_take: bool = game.can_add_item(entry.id, entry.tier)
-		button(Rect2(rect.position + Vector2(20, 244), Vector2(210, 42)), "装备 · %d" % (i + 1) if can_take else "武器栏已满", "treasure_choice", i, can_take, can_take)
-	button(Rect2(230, 567, 250, 45), "放弃奖励 · Esc", "treasure_skip")
-	button(Rect2(786, 567, 250, 45), "整理背包 · Tab", "inventory")
+		button(Rect2(rect.position + Vector2(20, 244), Vector2(210, 42)), ("装备" if game.pad.active else "装备 · %d" % (i + 1)) if can_take else "武器栏已满", "treasure_choice", i, can_take, can_take)
+	button(Rect2(230, 567, 250, 45), "放弃奖励 · " + game.pad.key("B", "Esc"), "treasure_skip")
+	button(Rect2(786, 567, 250, 45), "整理背包 · " + game.pad.key("Start", "Tab"), "inventory")
 	for i in range(offers.size()):
 		if Rect2(230 + i * 278, 221, 250, 235).has_point(pointer_position):
 			item_tooltip(offers[i], pointer_position + Vector2(20, 20))
@@ -1240,7 +1264,7 @@ func npc_panel() -> void:
 	speech_bubble(line, Vector2(365, 322), Rect2(488, 283, 510, 87), 138.0, spec.color, 470.0, 23)
 	paragraph("这次已经帮过你了。继续前进，公主还在等你。" if used else spec.offer, Vector2(505, 392), 469, 19, MUTED, 3)
 	button(Rect2(504, 493, 493, 45), "谢谢，下次见" if used else spec.button, "npc_accept", 0, true)
-	button(Rect2(504, 548, 493, 36), "先继续探索 · Esc", "npc_close")
+	button(Rect2(504, 548, 493, 36), "先继续探索 · " + game.pad.key("B", "Esc"), "npc_close")
 
 func ending_panel() -> void:
 	scrim()
@@ -1258,7 +1282,7 @@ func ending_panel() -> void:
 	center("累计 %d 字节  /  %d 击杀  /  %d 房间" % [game.earned, game.kills, game.cleared_count], Vector2(640, 425), 20, GOLD)
 	if game.assisted:
 		center("本局使用调试辅助，不写入最高纪录", Vector2(640, 455), 14, RED)
-	button(Rect2(410, 482, 460, 49), "再来一局 · R" if won or dead else "继续探索 · Enter", "restart" if won or dead else "resume", 0, true)
+	button(Rect2(410, 482, 460, 49), ("再来一局 · " + game.pad.key("A", "R")) if won or dead else ("继续探索 · " + game.pad.key("A", "Enter")), "restart" if won or dead else "resume", 0, true)
 	button(Rect2(410, 547, 460, 43), "返回标题", "title")
 
 func guide() -> void:
@@ -1266,7 +1290,7 @@ func guide() -> void:
 	box(Rect2(124, 63, 1032, 584), PANEL, LINE, 18)
 	micro("FIELD GUIDE / TOP-DOWN ROGUELITE", Vector2(163, 106), MINT)
 	text("救公主行动手册", Vector2(162, 155), 36, WHITE, true)
-	button(Rect2(956, 93, 160, 41), "返回 · Esc", "close_guide")
+	button(Rect2(956, 93, 160, 41), "返回 · " + game.pad.key("B", "Esc"), "close_guide")
 	var lines: Array[String] = [
 		"WASD / 方向键：四向移动　　空格 / Shift：无敌冲刺　　攻击自动瞄准并释放。",
 		"沿主路前进到首领。战斗中携带可部署道具时，按 F 在脚下放置一台炮塔。",
@@ -1278,6 +1302,14 @@ func guide() -> void:
 		"击败关底首领后，按 1–3 选择技能提升，再进入下一层；最终救回 ChatGPT 公主。",
 		"Esc / Tab 背包与暂停　F1 手册　M 静音　F11 全屏　Home 调试选项。"
 	]
+	if game.pad.active:
+		lines[0] = game.pad.text("", "左摇杆 / 方向键移动，{A} 无敌冲刺，{X} 交互。攻击自动瞄准并释放。")
+		lines[1] = game.pad.text("", "沿主路前进到首领。{RB} 在脚下部署炮塔，{Y} 施放已解锁的洋葱守护。")
+		lines[2] = game.pad.text("", "普通与精英房清空后可以购买补给，{Y} 刷新货架。关闭后结束补给。")
+		lines[4] = game.pad.text("", "武器限 6 栏，装备无限叠加。用方向键查看属性，{X} 打开合并与出售菜单。")
+		lines[6] = game.pad.text("", "{Start} 整理背包。同名同品质的两件物品可以合并。")
+		lines[7] = game.pad.text("", "击败关底首领后，用方向键选择技能，{A} 确认，再进入下一层。")
+		lines[8] = game.pad.text("", "{Start} 暂停 / 背包　{LB} 手册　{B} 返回。菜单支持左摇杆和方向键。")
 	for i in range(lines.size()):
 		text("%02d" % (i + 1), Vector2(164, 209 + i * 43), 15, MINT)
 		text(lines[i], Vector2(202, 209 + i * 43), 17, WHITE if i % 2 == 0 else MUTED)
@@ -1293,7 +1325,38 @@ func cheats() -> void:
 	var can_skip: bool = game.floor_index < game.Data.FLOOR_COUNT - 1
 	button(Rect2(404, 381, 472, 55), "3 · 跳到下一关" if can_skip else "3 · 已到最终关", "skip_floor", 0, false, can_skip)
 	text("使用任意辅助后，本局不会写入普通纪录。", Vector2(404, 478), 16, MUTED)
-	button(Rect2(404, 514, 472, 44), "返回 · Home / Esc", "close_cheats")
+	button(Rect2(404, 514, 472, 44), "返回 · " + game.pad.key("B", "Home / Esc"), "close_cheats")
+
+func menu_context() -> String:
+	return game.state + ("/item" if not item_context.is_empty() else "")
+
+func menu_entries() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	for entry in buttons:
+		if entry.state == game.state and (item_context.is_empty() or entry.action in ["menu_sell", "menu_fuse"]):
+			entries.append(entry)
+	if game.state == "inventory" and item_context.is_empty():
+		entries.append_array(item_slots)
+	return entries
+
+func move_menu_focus(direction: Vector2) -> void:
+	game.pad.move_focus(menu_entries(), menu_context(), direction)
+	queue_redraw()
+
+func confirm_menu_focus() -> void:
+	var focus: Dictionary = game.pad.focused(menu_entries(), menu_context())
+	if focus.is_empty():
+		return
+	if focus.action == "item":
+		right_click(focus.rect.get_center())
+	else:
+		click(focus.rect.get_center())
+	queue_redraw()
+
+func open_focused_item() -> void:
+	var focus: Dictionary = game.pad.focused(menu_entries(), menu_context())
+	if focus.get("action") == "item":
+		right_click(focus.rect.get_center())
 
 func move_pointer(p: Vector2) -> void:
 	if surface == "world":
