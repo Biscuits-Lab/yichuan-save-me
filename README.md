@@ -111,6 +111,8 @@ v0.6.1 包含七层主题地牢与独立横版 2D 沙盒「像素旷野」。地
 
 逻辑检查使用 `--headless`。GPU 渲染与鼠标交互在隔离的后台桌面运行，测试窗口不出现在使用者屏幕，也不切换活动桌面；结果以日志和图片保存。
 
+修改启动入口或启动依赖后，在无 `.godot` 缓存的临时副本中运行 `python tools/check_startup.py`，并用下方的地牢渲染命令确认主菜单画面。Windows 打包会先导入资源并检查源码启动，再运行导出的 EXE 确认主菜单初始化。通过后才替换本地 EXE 和 ZIP，启动检查日志保存在 `.tools/check-*.log`。
+
 ```powershell
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file "$PWD/.tools/sandbox-tests.log" --script tools/test_sandbox.gd -- --no-audio
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file "$PWD/.tools/selfcheck-fixed.log" --script tools/test_sandbox_selfcheck.gd -- --no-audio

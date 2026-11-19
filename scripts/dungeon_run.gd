@@ -221,7 +221,10 @@ func _ready() -> void:
 	view.game = self
 	add_child(view)
 	load_record()
-	if "--smoke-play" in OS.get_cmdline_user_args():
+	var args := OS.get_cmdline_user_args()
+	if "--check-startup" in args and state == "title" and view.overlay != null and view.overlay.is_visible_in_tree():
+		print("STARTUP CHECK: title initialized")
+	if "--smoke-play" in args:
 		start_run(20261113, true)
 
 func setup_input() -> void:

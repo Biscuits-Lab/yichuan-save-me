@@ -8,11 +8,13 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
-import subprocess
+import tempfile
 import urllib.request
 import zipfile
 
-ROOT = Path(__file__).resolve().parents[1]
+from check_startup import ENGINE, ROOT, check_project_startup, check_title, run_godot
+
+
 VERSION = "4.5.2-stable"
 URL = (
     "https://github.com/godotengine/godot-builds/releases/download/"
@@ -86,21 +88,7 @@ def fetch_template() -> Path:
     return target
 
 
-def main() -> None:
-    fetch_template()
-    engine = ROOT / ".tools/godot/Godot_v4.5.2-stable_win64_console.exe"
-    output = ROOT / "build/windows-v0.6.1"
-    output.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [str(engine), "--headless", "--path", str(ROOT), "--log-file", str(ROOT / ".tools/export.log"), "--export-release", "Windows Desktop"],
-        cwd=ROOT,
-        check=True,
-    )
-    exe = output / "毅川救我.exe"
-    if not exe.exists():
-        raise RuntimeError("Export did not produce the game executable")
-    print(f"Built: {exe} ({exe.stat().st_size / 1024 / 1024:.1f} MiB)", flush=True)
-    bundle = ROOT / "build/毅川救我-v0.6.1-地牢与沙盒-Windows-x64.zip"
+def write_bundle(exe: Path, bundle: Path) -> None:
     with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.write(exe, exe.name)
         archive.write(ROOT / "README.md", "README.md")
@@ -109,6 +97,28 @@ def main() -> None:
         for license_path in (ROOT / "assets/fonts").glob("*-OFL.txt"):
             archive.write(license_path, "licenses/" + license_path.name)
         archive.write(ROOT / "docs/licenses/Godot-MIT.txt", "licenses/Godot-MIT.txt")
+
+
+def main() -> None:
+    check_project_startup()
+    fetch_template()
+    build = ROOT / "build"
+    build.mkdir(exist_ok=True)
+    exe = build / "windows-v0.6.1/毅川救我.exe"
+    bundle = build / "毅川救我-v0.6.1-地牢与沙盒-Windows-x64.zip"
+    with tempfile.TemporaryDirectory(prefix=".windows-build-", dir=build) as staging:
+        staged_exe = Path(staging) / exe.name
+        run_godot(
+            ENGINE, ROOT / ".tools/export.log",
+            "--path", str(ROOT), "--export-release", "Windows Desktop", str(staged_exe),
+        )
+        check_title(staged_exe, ROOT / ".tools/check-export-startup.log")
+        staged_bundle = Path(staging) / bundle.name
+        write_bundle(staged_exe, staged_bundle)
+        exe.parent.mkdir(exist_ok=True)
+        staged_exe.replace(exe)
+        staged_bundle.replace(bundle)
+    print(f"Built: {exe} ({exe.stat().st_size / 1024 / 1024:.1f} MiB)", flush=True)
     print(f"Packaged: {bundle}", flush=True)
 
 
