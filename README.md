@@ -6,6 +6,8 @@ v0.6.1 包含七层主题地牢与独立横版 2D 沙盒「像素旷野」。地
 
 ## 运行
 
+[浏览器在线玩](https://biscuits-lab.github.io/yichuan-save-me/)。点击「开始游戏」后可选地牢或像素旷野。网页存档保存在当前浏览器中。
+
 当前本地构建为 v0.6.1，EXE 可直接运行；ZIP 包含游戏、说明和许可文件。此前已发布版本：[v0.5.1 Windows 版](https://github.com/Biscuits-Lab/yichuan-save-me/releases/tag/v0.5.1)。
 
 双击 `开始游戏.cmd`。启动脚本优先运行 `build/windows-v0.6.1/毅川救我.exe`，没有构建时使用项目内 Godot 运行源码。Windows 版资源内嵌，可独立运行，无需安装 Godot。便携包：`build/毅川救我-v0.6.1-地牢与沙盒-Windows-x64.zip`。

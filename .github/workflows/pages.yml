@@ -1,0 +1,50 @@
+name: Deploy playable web game
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/configure-pages@v5
+      - name: Install Godot
+        env:
+          GODOT_VERSION: 4.5.2-stable
+        run: |
+          editor="Godot_v${GODOT_VERSION}_linux.x86_64"
+          curl --fail --location --retry 3 \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/${editor}.zip" \
+            --output "$RUNNER_TEMP/godot.zip"
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP"
+          mv "$RUNNER_TEMP/$editor" "$RUNNER_TEMP/godot"
+      - name: Export the web game
+        run: python3 tools/build_web.py --godot "$RUNNER_TEMP/godot"
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: build/web
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="description" content="毅川救我，七层地牢与像素旷野双模式。">
+	<title>$GODOT_PROJECT_NAME</title>
+	$GODOT_HEAD_INCLUDE
+	<style>
+		:root {
+			color-scheme: dark;
+			font-family: system-ui, "Microsoft YaHei", sans-serif;
+			background: #101922;
+			color: #f3ecd8;
+		}
+		body { margin: 0; overflow: hidden; }
+		canvas { display: block; touch-action: none; }
+		canvas:focus { outline: none; }
+		#launcher {
+			position: fixed;
+			inset: 0;
+			display: grid;
+			place-items: center;
+			overflow: auto;
+			background: radial-gradient(ellipse at center, #223d42, #101922 67%);
+		}
+		#launcher[hidden], [hidden] { display: none; }
+		.launch-card {
+			box-sizing: border-box;
+			width: min(28rem, calc(100% - 2rem));
+			padding: clamp(1.25rem, 5vw, 3rem);
+			text-align: center;
+		}
+		.game-icon { width: 4rem; height: 4rem; }
+		h1 { margin: 0.75rem 0 0.3rem; font-size: clamp(2.1rem, 8vw, 3.5rem); }
+		p { margin: 0.6rem 0; }
+		.modes { color: #a9cec5; }
+		#start {
+			margin-top: 1.5rem;
+			min-height: 3rem;
+			width: min(100%, 15rem);
+			padding: 0.5rem 1rem;
+			border: 1px solid #85e0b9;
+			border-radius: 0.5rem;
+			background: #85e0b9;
+			color: #101922;
+			font: inherit;
+			font-weight: 700;
+			cursor: pointer;
+		}
+		#start:hover { background: #a3efcf; }
+		#start:focus-visible { outline: 2px solid #ffca80; outline-offset: 4px; }
+		#progress { width: 100%; margin-top: 1.5rem; accent-color: #85e0b9; }
+		#status { line-height: 1.5; }
+	</style>
+</head>
+<body>
+	<canvas id="canvas" tabindex="0" aria-label="毅川救我游戏画面">此浏览器无法显示游戏画面。</canvas>
+	<main id="launcher">
+		<div class="launch-card">
+			<img class="game-icon" src="index.icon.png" alt="" width="64" height="64">
+			<h1>毅川救我</h1>
+			<p class="modes">地牢冒险 · 像素旷野</p>
+			<button id="start" type="button">开始游戏</button>
+			<progress id="progress" aria-label="下载进度" hidden></progress>
+			<p id="status" role="status"></p>
+			<noscript>请启用 JavaScript 后重新打开页面。</noscript>
+		</div>
+	</main>
+	<script src="$GODOT_URL"></script>
+	<script>
+		const launcher = document.querySelector("#launcher");
+		const start = document.querySelector("#start");
+		const status = document.querySelector("#status");
+		const progress = document.querySelector("#progress");
+		const canvas = document.querySelector("#canvas");
+
+		start.addEventListener("click", async () => {
+			start.hidden = true;
+			progress.hidden = false;
+			status.textContent = "正在下载游戏…";
+			try {
+				if (typeof Engine === "undefined") {
+					throw new Error("游戏脚本加载失败");
+				}
+				const missing = Engine.getMissingFeatures({ threads: $GODOT_THREADS_ENABLED });
+				if (missing.length) {
+					throw new Error("此浏览器缺少运行游戏所需的功能：" + missing.join("、"));
+				}
+				const engine = new Engine($GODOT_CONFIG);
+				await engine.startGame({
+					canvas,
+					onProgress(loaded, total) {
+						if (total > 0) {
+							progress.max = total;
+							progress.value = loaded;
+							if (loaded >= total) status.textContent = "正在启动游戏…";
+						}
+					},
+				});
+				launcher.hidden = true;
+				canvas.focus();
+			} catch (error) {
+				console.error(error);
+				status.textContent = error.message || String(error);
+				progress.hidden = true;
+				start.hidden = false;
+				start.textContent = "重新加载";
+				start.addEventListener("click", () => location.reload(), { once: true });
+			}
+		}, { once: true });
+	</script>
+</body>
+</html>
