@@ -2,14 +2,13 @@
 
 import argparse
 import io
-import json
 from pathlib import Path
 import shutil
 import tempfile
 import urllib.request
 import zipfile
 
-from build_windows import RemoteZip, URL, VERSION
+from build_windows import RemoteZip, URL
 from check_startup import ENGINE, ROOT, run_godot
 
 
@@ -17,13 +16,11 @@ def fetch_template() -> None:
     target = ROOT / ".tools/export_templates/web_nothreads_release.zip"
     if zipfile.is_zipfile(target):
         return
-    with urllib.request.urlopen(
-        "https://api.github.com/repos/godotengine/godot-builds/releases/tags/" + VERSION,
-        timeout=30,
-    ) as release:
-        asset = next(a for a in json.load(release)["assets"] if a["browser_download_url"] == URL)
+    request = urllib.request.Request(URL, method="HEAD")
+    with urllib.request.urlopen(request, timeout=30) as response:
+        archive_size = int(response.headers["Content-Length"])
     print("Downloading the official single-threaded Web template…", flush=True)
-    with zipfile.ZipFile(RemoteZip(URL, asset["size"])) as archive:
+    with zipfile.ZipFile(RemoteZip(URL, archive_size)) as archive:
         data = archive.read("templates/" + target.name)
     with zipfile.ZipFile(io.BytesIO(data)) as template:
         if template.testzip() is not None:
