@@ -355,7 +355,6 @@ func mine(c: Vector2i) -> bool:
 		return false
 	var id: int = world.tile(c)
 	if adventure.structures.mine_special(c):
-		ui.map_dirty = true
 		return true
 	var item: String = Data.BLOCKS[id].item
 	if id == Data.Block.LEAF:
@@ -383,7 +382,6 @@ func mine(c: Vector2i) -> bool:
 						world.set_tile(leaf, Data.Block.AIR)
 	burst(cell_center(c), Color(Data.BLOCKS[id].color), 7)
 	mining_progress = 0.0
-	ui.map_dirty = true
 	audio.sfx("hit")
 	return true
 
@@ -430,7 +428,6 @@ func place(c: Vector2i, item: String = "") -> bool:
 	add_item(item, -1)
 	stats.placed = int(stats.get("placed", 0)) + 1
 	burst(cell_center(c), Color(Data.BLOCKS[id].color), 4)
-	ui.map_dirty = true
 	audio.sfx("block")
 	if id == Data.Block.BEACON and c.y <= world.surface_at(c.x) + 2 and not completed:
 		completed = true
@@ -578,7 +575,6 @@ func safe_spawn() -> Vector2:
 	if not world.solid(at):
 		adventure.structures.salvage(at)
 		world.set_tile(at, Data.Block.DIRT)
-	ui.map_dirty = true
 	return Vector2((at.x + 0.5) * Data.TILE, at.y * Data.TILE - 0.01)
 
 func respawn() -> void:
@@ -832,8 +828,7 @@ func _physics_process(delta: float) -> void:
 	var reveal_cell: Vector2i = cell_at(player)
 	if reveal_cell != last_reveal:
 		last_reveal = reveal_cell
-		if world.reveal(player):
-			ui.map_dirty = true
+		world.reveal(player)
 	var target: Vector2 = player + Vector2(velocity.x * 0.22, -80)
 	camera.position = camera.position.lerp(target, 1.0 - exp(-5.0 * delta))
 	camera.position.x = clampf(camera.position.x, 540, Data.WIDTH * Data.TILE - 540)

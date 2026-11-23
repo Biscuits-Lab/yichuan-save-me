@@ -136,6 +136,7 @@ var tiles := PackedByteArray()
 var explored := PackedByteArray()
 var surface := PackedInt32Array()
 var dirty_chunks: Dictionary = {}
+var map_cells_changed: Dictionary = {}
 var torch_cells: Dictionary = {}
 var spawn := Vector2.ZERO
 var heart_cell := Vector2i.ZERO
@@ -153,7 +154,10 @@ func solid(c: Vector2i) -> bool:
 func set_tile(c: Vector2i, value: int) -> void:
 	if not valid(c):
 		return
-	tiles[c.y * WIDTH + c.x] = value
+	var index: int = c.y * WIDTH + c.x
+	tiles[index] = value
+	if explored[index] != 0:
+		map_cells_changed[c] = true
 	var chunk := Vector2i(c.x / CHUNK, c.y / CHUNK)
 	dirty_chunks[chunk] = true
 	if value in [Block.TORCH, Block.BEACON]:
@@ -177,6 +181,7 @@ func generate(chosen_seed: int) -> void:
 	surface.resize(WIDTH)
 	torch_cells.clear()
 	dirty_chunks.clear()
+	map_cells_changed.clear()
 	var hills := FastNoiseLite.new()
 	hills.seed = chosen_seed
 	hills.frequency = 0.018
@@ -265,6 +270,7 @@ func reveal(p: Vector2) -> bool:
 			var c: Vector2i = at + Vector2i(dx, dy)
 			if valid(c) and dx * dx + dy * dy < 170 and explored[c.y * WIDTH + c.x] == 0:
 				explored[c.y * WIDTH + c.x] = 1
+				map_cells_changed[c] = true
 				changed = true
 	return changed
 

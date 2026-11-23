@@ -516,7 +516,6 @@ func grow_tree(c: Vector2i) -> bool:
 			var at: Vector2i = c + Vector2i(dx, dy - 6)
 			if dx != 0 and absf(dx / 3.5) + absf(dy / 3.5) < 1.5 and game.world.tile(at) == Data.Block.AIR:
 				game.world.set_tile(at, Data.Block.LEAF)
-	game.ui.map_dirty = true
 	return true
 
 func save_data() -> Dictionary:

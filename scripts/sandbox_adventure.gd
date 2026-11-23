@@ -270,7 +270,6 @@ func unlock_hardmode() -> void:
 			var c := Vector2i(x,y)
 			if not structures.wall(c) and game.world.tile(c) in [Data.Block.STONE,Data.Block.IRON,Data.Block.CORRUPT_STONE] and posmod(x * 173 + y * 661 + game.world.seed_value,37) < 5:
 				game.world.set_tile(c,Data.Block.MYTHRIL)
-	game.ui.map_dirty = true
 	game.notify("构建之墙倒下了。困难世界开启：秘银矿脉生成，新的敌人开始游荡。")
 
 func update_enemies(delta: float) -> void:

@@ -11,6 +11,7 @@ const MUTED := Color("a4b9b9")
 const MINT := Color("a9dfb5")
 const GOLD := Color("efce8a")
 const CORAL := Color("ec9292")
+const LIGHT_STEP := 32
 var game: Node
 var surface: String = "world"
 var buttons: Array[Dictionary] = []
@@ -18,10 +19,13 @@ var tile_image: Image
 var tile_texture: Texture2D
 var icon_textures: Dictionary = {}
 var chunks: Dictionary = {}
-var map_texture: Texture2D
+var map_texture: ImageTexture
+var map_image: Image
 var map_dirty: bool = true
 var map_time: float = -10.0
 var visible_world := Rect2()
+var light_image: Image
+var light_texture: ImageTexture
 var styles: Dictionary = {}
 var detail
 
@@ -273,27 +277,27 @@ func draw_world() -> void:
 	game.world.dirty_chunks.clear()
 	if chunks.size() > 128:
 		chunks.clear()
-	var first: Vector2i = game.cell_at(visible_world.position)
-	var last: Vector2i = game.cell_at(visible_world.end)
-	for x in range(maxi(0, first.x), mini(Data.WIDTH, last.x + 1)):
+	var first: Vector2i = game.cell_at(visible_world.position).max(Vector2i.ZERO)
+	var end: Vector2i = (game.cell_at(visible_world.end) + Vector2i.ONE).min(Vector2i(Data.WIDTH, Data.HEIGHT))
+	for x in range(first.x, end.x):
 		var ground: int = game.world.surface_at(x)
 		var top: float = ground * Data.TILE
 		var fill := Color("4e4949")
 		draw_rect(Rect2(x * Data.TILE, top, Data.TILE, Data.HEIGHT * Data.TILE - top), fill)
 		draw_rect(Rect2(x * Data.TILE, (ground + 10) * Data.TILE, Data.TILE, (Data.HEIGHT - ground - 10) * Data.TILE), Color("353d49"))
-	for y in range(maxi(0, first.y), mini(Data.HEIGHT, last.y + 1), 2):
-		for x in range(maxi(0, first.x), mini(Data.WIDTH, last.x + 1), 2):
+	for y in range(first.y, end.y, 2):
+		for x in range(first.x, end.x, 2):
 			if y > game.world.surface_at(x) + 1:
 				draw_rect(Rect2(x * Data.TILE + 10, y * Data.TILE + 6, 12, 3), Color("3d444e"))
 	var chunk_size: int = Data.CHUNK * Data.TILE
-	detail.background()
+	detail.background(first, end)
 	var from: Vector2i = Vector2i((visible_world.position / chunk_size).floor())
 	var to: Vector2i = Vector2i((visible_world.end / chunk_size).floor())
 	for y in range(maxi(0, from.y), mini(Data.HEIGHT / Data.CHUNK - 1, to.y) + 1):
 		for x in range(maxi(0, from.x), mini(Data.WIDTH / Data.CHUNK - 1, to.x) + 1):
 			var c := Vector2i(x, y)
 			draw_texture(chunk_texture(c), Vector2(c) * chunk_size)
-	detail.liquids()
+	detail.liquids(first, end)
 	if game.merchant_present and visible_world.grow(100).has_point(game.merchant_position):
 		game.priest_atlas.draw(self, 0, game.merchant_position, 64, 1)
 		world_label("神父 · CTO", game.merchant_position - Vector2(0, 83), GOLD)
@@ -332,30 +336,54 @@ func world_label(value: String, p: Vector2, color: Color) -> void:
 	draw_string(game.bold, p - Vector2(offset, 0), value, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, color)
 
 func draw_lighting() -> void:
-	var lights: Array[Vector2] = []
+	var origin: Vector2 = (visible_world.position / LIGHT_STEP).floor() * LIGHT_STEP
+	var grid_size := Vector2i((visible_world.size / LIGHT_STEP).ceil()) + Vector2i.ONE
+	var first_center: Vector2 = origin + Vector2.ONE * LIGHT_STEP / 2.0
+	var levels := PackedFloat32Array()
+	levels.resize(grid_size.x * grid_size.y)
+	var radius: float = 160.0 if game.count_item("lantern") > 0 else 102.0
+	add_light(levels, grid_size, first_center, game.player - Vector2(0, 18), radius, 0.8)
+
 	var boss: Dictionary = game.adventure.current_boss()
 	if not boss.is_empty():
-		lights.append(boss.p - Vector2(0, boss.spec.height * 0.5))
+		add_light(levels, grid_size, first_center, boss.p - Vector2(0, boss.spec.height * 0.5), 175.0, 1.1)
+	var light_bounds: Rect2 = visible_world.grow(180)
 	for c in game.world.torch_cells:
 		var p: Vector2 = game.cell_center(c)
-		if visible_world.grow(180).has_point(p):
-			lights.append(p)
-	if visible_world.grow(180).has_point(game.cell_center(game.world.heart_cell)) and game.world.tile(game.world.heart_cell) == Data.Block.CORE:
-		lights.append(game.cell_center(game.world.heart_cell))
-	var step: int = 32
-	var origin: Vector2 = (visible_world.position / step).floor() * step
-	for y in range(0, ceili(visible_world.size.y / step) + 1):
-		for x in range(0, ceili(visible_world.size.x / step) + 1):
-			var p: Vector2 = origin + Vector2(x, y) * step
-			var center: Vector2 = p + Vector2.ONE * step / 2
-			var depth: float = center.y / Data.TILE - game.world.surface_at(int(center.x / Data.TILE))
-			var light: float = maxf(0.07, game.daylight() * (1 - clampf(depth / 11, 0, 1)))
-			var radius: float = 160.0 if game.count_item("lantern") > 0 else 102.0
-			light = maxf(light, clampf(1 - center.distance_to(game.player - Vector2(0, 18)) / radius, 0, 1) * 0.8)
-			for lamp in lights:
-				light = maxf(light, clampf(1 - center.distance_to(lamp) / 175.0, 0, 1) * 1.1)
-			if light < 0.98:
-				draw_rect(Rect2(p, Vector2.ONE * step), Color(0.025, 0.035, 0.07, (1 - light) * 0.92))
+		if light_bounds.has_point(p):
+			add_light(levels, grid_size, first_center, p, 175.0, 1.1)
+	var core: Vector2 = game.cell_center(game.world.heart_cell)
+	if light_bounds.has_point(core) and game.world.tile(game.world.heart_cell) == Data.Block.CORE:
+		add_light(levels, grid_size, first_center, core, 175.0, 1.1)
+
+	# One nearest-filtered texel per lighting cell, with a single overlay draw.
+	var resize: bool = light_image == null or light_image.get_size() != grid_size
+	if resize:
+		light_image = Image.create(grid_size.x, grid_size.y, false, Image.FORMAT_RGBA8)
+	var daylight: float = game.daylight()
+	for x in range(grid_size.x):
+		var surface_y: int = game.world.surface_at(int((first_center.x + x * LIGHT_STEP) / Data.TILE))
+		for y in range(grid_size.y):
+			var depth: float = (first_center.y + y * LIGHT_STEP) / Data.TILE - surface_y
+			var light: float = maxf(levels[y * grid_size.x + x], maxf(0.07, daylight * (1 - clampf(depth / 11, 0, 1))))
+			var opacity: float = (1 - light) * 0.92 if light < 0.98 else 0.0
+			light_image.set_pixel(x, y, Color(1, 1, 1, opacity))
+	if resize:
+		light_texture = ImageTexture.create_from_image(light_image)
+	else:
+		light_texture.update(light_image)
+	draw_texture_rect(light_texture, Rect2(origin, Vector2(grid_size * LIGHT_STEP)), false, Color(0.025, 0.035, 0.07))
+
+func add_light(levels: PackedFloat32Array, grid_size: Vector2i, first_center: Vector2, p: Vector2, radius: float, strength: float) -> void:
+	var center: Vector2 = (p - first_center) / LIGHT_STEP
+	var reach: float = radius / LIGHT_STEP
+	var first := Vector2i((center - Vector2.ONE * reach).ceil()).max(Vector2i.ZERO)
+	var last := Vector2i((center + Vector2.ONE * reach).floor()).min(grid_size - Vector2i.ONE)
+	for y in range(first.y, last.y + 1):
+		for x in range(first.x, last.x + 1):
+			var light: float = (1.0 - center.distance_to(Vector2(x, y)) / reach) * strength
+			var index: int = y * grid_size.x + x
+			levels[index] = maxf(levels[index], light)
 
 func draw_target() -> void:
 	if not game.pad.active and game.ui.blocks_world(game.pointer):
@@ -387,19 +415,30 @@ func draw_target() -> void:
 		world_label(label, rect.get_center() + Vector2(0, 38), WHITE)
 
 func update_map() -> void:
-	if not map_dirty or game.visual_clock - map_time < 0.6:
+	if not map_dirty and (game.world.map_cells_changed.is_empty() or game.visual_clock - map_time < 0.6):
 		return
 	map_time = game.visual_clock
-	map_dirty = false
-	var image := Image.create(Data.WIDTH, Data.HEIGHT, false, Image.FORMAT_RGBA8)
-	image.fill(Color("12232e"))
-	for y in range(Data.HEIGHT):
-		for x in range(Data.WIDTH):
-			if game.world.explored[y * Data.WIDTH + x] != 0:
-				var id: int = game.world.tile(Vector2i(x, y))
-				var color: Color = Color("45586a") if y > game.world.surface_at(x) else Color("a5c8cb")
-				image.set_pixel(x, y, color if id == Data.Block.AIR else Color(Data.BLOCKS[id].color))
-	map_texture = ImageTexture.create_from_image(image)
+	if map_dirty:
+		map_dirty = false
+		map_image = Image.create(Data.WIDTH, Data.HEIGHT, false, Image.FORMAT_RGBA8)
+		map_image.fill(Color("12232e"))
+		for y in range(Data.HEIGHT):
+			for x in range(Data.WIDTH):
+				if game.world.explored[y * Data.WIDTH + x] != 0:
+					update_map_cell(Vector2i(x, y))
+	else:
+		for cell in game.world.map_cells_changed:
+			update_map_cell(cell)
+	game.world.map_cells_changed.clear()
+	if map_texture == null:
+		map_texture = ImageTexture.create_from_image(map_image)
+	else:
+		map_texture.update(map_image)
+
+func update_map_cell(cell: Vector2i) -> void:
+	var id: int = game.world.tile(cell)
+	var air: Color = Color("45586a") if cell.y > game.world.surface_at(cell.x) else Color("a5c8cb")
+	map_image.set_pixelv(cell, air if id == Data.Block.AIR else Color(Data.BLOCKS[id].color))
 
 func draw_map(rect: Rect2, full: bool = false) -> void:
 	update_map()

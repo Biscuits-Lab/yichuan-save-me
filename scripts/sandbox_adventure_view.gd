@@ -83,30 +83,32 @@ static func paint_tile(image: Image, id: int) -> void:
 				image.fill_rect(Rect2i(7,4,11,4),color.darkened(0.3))
 				image.fill_rect(Rect2i(8,9,2,8),color.lightened(0.2))
 
-func background() -> void:
-	var a: Vector2i = g.cell_at(v.visible_world.position)
-	var b: Vector2i = g.cell_at(v.visible_world.end)
-	for y in range(maxi(0,a.y),mini(Data.HEIGHT,b.y + 1)):
-		for x in range(maxi(0,a.x),mini(Data.WIDTH,b.x + 1)):
-			var c := Vector2i(x,y)
-			if g.adventure.structures.wall(c):
-				v.draw_rect(Rect2(Vector2(c) * Data.TILE,Vector2.ONE * Data.TILE),Color("6a584b"))
-				v.draw_rect(Rect2(Vector2(c) * Data.TILE + Vector2(1,1),Vector2(22,2)),Color("8c7158"))
+func background(first: Vector2i, end: Vector2i) -> void:
+	var walls: PackedByteArray = g.adventure.structures.walls
+	for y in range(first.y, end.y):
+		var row: int = y * Data.WIDTH
+		for x in range(first.x, end.x):
+			if walls[row + x] != 0:
+				var p := Vector2(x, y) * Data.TILE
+				v.draw_rect(Rect2(p, Vector2.ONE * Data.TILE), Color("6a584b"))
+				v.draw_rect(Rect2(p + Vector2.ONE, Vector2(22, 2)), Color("8c7158"))
 
-func liquids() -> void:
-	var a: Vector2i = g.cell_at(v.visible_world.position)
-	var b: Vector2i = g.cell_at(v.visible_world.end)
-	for y in range(maxi(0,a.y),mini(Data.HEIGHT,b.y + 1)):
-		for x in range(maxi(0,a.x),mini(Data.WIDTH,b.x + 1)):
-			var c := Vector2i(x,y)
-			var fluid: Vector2i = g.adventure.structures.fluid(c)
-			if fluid.y > 0 and not g.world.solid(c):
-				var height: float = fluid.y * 3
-				var color := Color(0.32,0.62,0.82,0.7) if fluid.x == 1 else Color(0.94,0.4,0.19,0.9)
-				var rect := Rect2(Vector2(c) * Data.TILE + Vector2(0,24 - height),Vector2(24,height))
-				v.draw_rect(rect,color)
-				if g.adventure.structures.fluid(c + Vector2i.UP).y == 0:
-					v.draw_rect(Rect2(rect.position,Vector2(24,2)),color.lightened(0.3))
+func liquids(first: Vector2i, end: Vector2i) -> void:
+	var amounts: PackedByteArray = g.adventure.structures.liquid_amount
+	var types: PackedByteArray = g.adventure.structures.liquid_type
+	for y in range(first.y, end.y):
+		var row: int = y * Data.WIDTH
+		for x in range(first.x, end.x):
+			var index: int = row + x
+			var amount: int = amounts[index]
+			if amount == 0 or g.world.solid(Vector2i(x, y)):
+				continue
+			var height: float = amount * 3
+			var color := Color(0.32, 0.62, 0.82, 0.7) if types[index] == 1 else Color(0.94, 0.4, 0.19, 0.9)
+			var rect := Rect2(Vector2(x, y) * Data.TILE + Vector2(0, Data.TILE - height), Vector2(Data.TILE, height))
+			v.draw_rect(rect, color)
+			if y == 0 or amounts[index - Data.WIDTH] == 0:
+				v.draw_rect(Rect2(rect.position, Vector2(Data.TILE, 2)), color.lightened(0.3))
 
 func enemy(enemy: Dictionary) -> void:
 	g.adventure.hydrate(enemy)
