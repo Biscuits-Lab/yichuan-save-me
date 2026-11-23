@@ -6,6 +6,10 @@ const View = preload("res://scripts/dungeon_view.gd")
 const Audio = preload("res://scripts/audio.gd")
 const Atlas = preload("res://scripts/sprite_atlas.gd")
 const Gamepad = preload("res://scripts/gamepad.gd")
+const FLOOR_SAMPLE_DIRECTIONS: Array[Vector2] = [
+	Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN,
+	Vector2(0.707, 0.707), Vector2(-0.707, 0.707), Vector2(0.707, -0.707), Vector2(-0.707, -0.707)
+]
 var pad := Gamepad.new()
 var hero_atlas: RefCounted
 var cast_atlas: RefCounted
@@ -407,14 +411,19 @@ func point_on_floor(p: Vector2) -> bool:
 			return true
 	return false
 
+func circle_on_floor(p: Vector2, radius: float) -> bool:
+	if not point_on_floor(p):
+		return false
+	for direction in FLOOR_SAMPLE_DIRECTIONS:
+		if not point_on_floor(p + direction * radius):
+			return false
+	return true
+
 func walkable(p: Vector2, radius: float = 13.0) -> bool:
 	# Interior circles are fully inside this rectangle; only boundaries need union tests.
 	if rooms.is_empty() or not current_room().rect.grow(-radius).has_point(p):
-		if not point_on_floor(p):
+		if not circle_on_floor(p, radius):
 			return false
-		for direction in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN, Vector2(0.707, 0.707), Vector2(-0.707, 0.707), Vector2(0.707, -0.707), Vector2(-0.707, -0.707)]:
-			if not point_on_floor(p + direction * radius):
-				return false
 	for rect in obstacles:
 		if rect.grow(radius).has_point(p):
 			return false
@@ -427,7 +436,9 @@ func nav_cell(p: Vector2) -> Vector2i:
 	return Vector2i(floori(p.x / 20), floori(p.y / 20))
 
 func build_navigation(clearance: float = 19.0) -> void:
-	var bounds: Rect2 = current_room().rect.grow(40)
+	var room_rect: Rect2 = current_room().rect
+	var bounds: Rect2 = room_rect.grow(40)
+	var interior: Rect2 = room_rect.grow(-clearance)
 	var first: Vector2i = nav_cell(bounds.position)
 	var last: Vector2i = nav_cell(bounds.end) + Vector2i.ONE
 	nav.region = Rect2i(first, last - first)
@@ -435,10 +446,25 @@ func build_navigation(clearance: float = 19.0) -> void:
 	nav.offset = Vector2(10, 10)
 	nav.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	nav.update()
+	# Grid rounding can put edge samples outside bounds by up to half a cell.
+	var sample_bounds: Rect2 = bounds.grow(20)
+	var blockers: Array[Rect2] = []
+	for rect in obstacles:
+		var expanded: Rect2 = rect.grow(clearance)
+		if expanded.intersects(sample_bounds):
+			blockers.append(expanded)
+	for rect in closed_gates():
+		blockers.append(rect.grow(clearance))
 	for y in range(first.y, last.y):
 		for x in range(first.x, last.x):
 			var p := Vector2(x * 20 + 10, y * 20 + 10)
-			nav.set_point_solid(Vector2i(x, y), not walkable(p, clearance))
+			var solid: bool = not interior.has_point(p) and not circle_on_floor(p, clearance)
+			if not solid:
+				for rect in blockers:
+					if rect.has_point(p):
+						solid = true
+						break
+			nav.set_point_solid(Vector2i(x, y), solid)
 
 func slide(p: Vector2, motion: Vector2, radius: float = 13.0) -> Vector2:
 	# Small substeps keep dashes from crossing narrow collision islands.
@@ -458,12 +484,25 @@ func line_clear(a: Vector2, b: Vector2) -> bool:
 		for i in range(steps + 1):
 			if not point_on_floor(a.lerp(b, float(i) / steps)):
 				return false
-	var blockers: Array[Rect2] = obstacles.duplicate()
-	blockers.append_array(closed_gates())
-	for rect in blockers:
-		if Geometry2D.segment_intersects_segment(a, b, rect.position, Vector2(rect.end.x, rect.position.y)) != null or Geometry2D.segment_intersects_segment(a, b, Vector2(rect.end.x, rect.position.y), rect.end) != null or Geometry2D.segment_intersects_segment(a, b, rect.end, Vector2(rect.position.x, rect.end.y)) != null or Geometry2D.segment_intersects_segment(a, b, Vector2(rect.position.x, rect.end.y), rect.position) != null:
+	var first: Vector2 = a.min(b)
+	var bounds := Rect2(first, a.max(b) - first)
+	for rect in obstacles:
+		if bounds.intersects(rect, true) and crosses_rect_edge(a, b, rect):
+			return false
+	for rect in closed_gates():
+		if bounds.intersects(rect, true) and crosses_rect_edge(a, b, rect):
 			return false
 	return true
+
+func crosses_rect_edge(a: Vector2, b: Vector2, rect: Rect2) -> bool:
+	var top_right := Vector2(rect.end.x, rect.position.y)
+	var bottom_left := Vector2(rect.position.x, rect.end.y)
+	return (
+		Geometry2D.segment_intersects_segment(a, b, rect.position, top_right) != null
+		or Geometry2D.segment_intersects_segment(a, b, top_right, rect.end) != null
+		or Geometry2D.segment_intersects_segment(a, b, rect.end, bottom_left) != null
+		or Geometry2D.segment_intersects_segment(a, b, bottom_left, rect.position) != null
+	)
 
 func hit_cover(rect: Rect2) -> void:
 	if rect not in obstacles:
@@ -495,6 +534,11 @@ func _process(delta: float) -> void:
 	if state != "playing":
 		pad.stop_combat_rumble()
 	clock += delta
+	if state == "playing" and (camera_shake > 0 or camera.offset != Vector2.ZERO):
+		camera_shake = maxf(0, camera_shake - delta * 20)
+		# Auto-attacks fire throughout a run. Keep their shake off the scrolling scene.
+		var moving: bool = player_moving or dash_time > 0 or not player.is_equal_approx(previous_player)
+		camera.offset = Vector2.ZERO if moving else Vector2(sin(clock * 61), cos(clock * 53)) * camera_shake
 	message_time = maxf(0, message_time - delta)
 	view.queue_redraw()
 	if view.overlay != null:
@@ -538,8 +582,6 @@ func _physics_process(delta: float) -> void:
 	player = slide(player, (dash_direction * 780 if dash_time > 0 else motion * move_speed()) * delta)
 	update_room_presence()
 	camera.position = camera.position.lerp(player, 1.0 - exp(-delta * 10))
-	camera_shake = maxf(0, camera_shake - delta * 20)
-	camera.offset = Vector2(sin(clock * 61), cos(clock * 53)) * camera_shake
 	if dash_time > 0 and effects.size() < 65:
 		add_effect("dash", player, player + facing, Color.WHITE, 0.18, 65)
 	footstep_timer -= delta
