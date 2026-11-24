@@ -687,7 +687,7 @@ func cover_art(rect: Rect2, broken: bool = false) -> void:
 
 func title_screen() -> void:
 	micro("YICHUAN / PRINCESS RESCUE", Vector2(68, 55), MINT, 9)
-	micro("V 0.5", Vector2(1138, 55), MUTED, 9)
+	micro("V " + str(ProjectSettings.get_setting("application/config/version")), Vector2(1138, 55), MUTED, 9)
 	box(Rect2(68, 105, 180, 30), Color("223a36"), Color("45675b"), 15)
 	text("双模式 · 地牢 / 沙盒", Vector2(82, 126), 16, MINT)
 	text("毅川救我", Vector2(63, 222), 74, WHITE, true)

@@ -3,6 +3,7 @@ extends Node2D
 const Data = preload("res://scripts/sandbox_data.gd")
 const Catalog = preload("res://scripts/sandbox_catalog.gd")
 const AdventureView = preload("res://scripts/sandbox_adventure_view.gd")
+const FaultView = preload("res://scripts/sandbox_fault_view.gd")
 const INK := Color("152a32")
 const PANEL := Color("1d343d")
 const EDGE := Color("3e5960")
@@ -28,9 +29,11 @@ var light_image: Image
 var light_texture: ImageTexture
 var styles: Dictionary = {}
 var detail
+var fault_view: RefCounted
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	fault_view = FaultView.new(self)
 	if surface in ["world", "ui"]:
 		detail = AdventureView.new(self)
 		make_tiles()
@@ -202,6 +205,9 @@ func chunk_texture(c: Vector2i) -> Texture2D:
 		return chunks[c]
 	var size: int = Data.CHUNK * Data.TILE
 	var image := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var corrupted: bool = game.fault.active
+	if corrupted:
+		fault_view.build_membrane()
 	for y in range(Data.CHUNK):
 		for x in range(Data.CHUNK):
 			var cell: Vector2i = c * Data.CHUNK + Vector2i(x, y)
@@ -209,7 +215,10 @@ func chunk_texture(c: Vector2i) -> Texture2D:
 				continue
 			var id: int = game.world.tile(cell)
 			if id != Data.Block.AIR:
-				image.blit_rect(tile_image, Rect2i(id * Data.TILE, 0, Data.TILE, Data.TILE), Vector2i(x, y) * Data.TILE)
+				var dest: Vector2i = Vector2i(x, y) * Data.TILE
+				image.blit_rect(tile_image, Rect2i(id * Data.TILE, 0, Data.TILE, Data.TILE), dest)
+				if corrupted:
+					fault_view.apply_tile(image, cell, dest, id)
 	var result: Texture2D = ImageTexture.create_from_image(image)
 	chunks[c] = result
 	return result
@@ -230,6 +239,9 @@ func _draw() -> void:
 					centered(game.pad.text("", hint), Vector2(640, 690), 15, WHITE)
 
 func draw_sky() -> void:
+	if game.fault.active and game.state not in ["menu", "confirm"]:
+		fault_view.draw_horizon()
+		return
 	var light: float = game.daylight()
 	var top: Color = Color("18273e").lerp(Color("80b5bd"), light)
 	var bottom: Color = Color("384758").lerp(Color("eee0b6"), light)
@@ -282,13 +294,15 @@ func draw_world() -> void:
 	for x in range(first.x, end.x):
 		var ground: int = game.world.surface_at(x)
 		var top: float = ground * Data.TILE
-		var fill := Color("4e4949")
+		var fill := Color("351824") if game.fault.active else Color("4e4949")
+		var deep := Color("21131e") if game.fault.active else Color("353d49")
 		draw_rect(Rect2(x * Data.TILE, top, Data.TILE, Data.HEIGHT * Data.TILE - top), fill)
-		draw_rect(Rect2(x * Data.TILE, (ground + 10) * Data.TILE, Data.TILE, (Data.HEIGHT - ground - 10) * Data.TILE), Color("353d49"))
-	for y in range(first.y, end.y, 2):
-		for x in range(first.x, end.x, 2):
-			if y > game.world.surface_at(x) + 1:
-				draw_rect(Rect2(x * Data.TILE + 10, y * Data.TILE + 6, 12, 3), Color("3d444e"))
+		draw_rect(Rect2(x * Data.TILE, (ground + 10) * Data.TILE, Data.TILE, (Data.HEIGHT - ground - 10) * Data.TILE), deep)
+	if not game.fault.active:
+		for y in range(first.y, end.y, 2):
+			for x in range(first.x, end.x, 2):
+				if y > game.world.surface_at(x) + 1:
+					draw_rect(Rect2(x * Data.TILE + 10, y * Data.TILE + 6, 12, 3), Color("3d444e"))
 	var chunk_size: int = Data.CHUNK * Data.TILE
 	detail.background(first, end)
 	var from: Vector2i = Vector2i((visible_world.position / chunk_size).floor())
@@ -306,21 +320,27 @@ func draw_world() -> void:
 	for enemy in game.enemies:
 		detail.enemy(enemy)
 	detail.actors()
+	fault_view.draw_actors()
 	var p: Vector2 = render_position(game.player, game.previous_player)
 	var pose: int = int(game.visual_clock * 9) % 4 if absf(game.velocity.x) > 5 else 0
-	var tint: Color = Color(1, 1, 1, 0.5) if game.hurt_time > 0 and int(game.visual_clock * 15) % 2 == 0 else Color.WHITE
-	game.hero_atlas.draw(self, pose if game.facing > 0 else 8 + pose, p, 44, 1, tint)
-	if game.sword_time > 0:
+	var blinking: bool = game.state != "fault_transition" and game.hurt_time > 0 and int(game.visual_clock * 15) % 2 == 0
+	var tint: Color = Color(1, 1, 1, 0.5) if blinking else Color.WHITE
+	var fallen: bool = game.state == "dead" and game.fault.pending
+	if fallen:
+		fault_view.draw_fallen_hero()
+	else:
+		game.hero_atlas.draw(self, pose if game.facing > 0 else 8 + pose, p, 44, 1, tint)
+	if not fallen and game.sword_time > 0:
 		var progress: float = 1 - game.sword_time / 0.24
 		draw_set_transform(p - Vector2(0, 23), (progress * 2.5 - 1.25) * game.facing)
 		var weapon: String = game.held_item() if Catalog.WEAPONS.get(game.held_item(),{}).get("type","") == "melee" else "sword"
 		icon(weapon, Vector2(game.facing * 28, -12), 46)
 		draw_set_transform(Vector2.ZERO)
-	elif game.mining_progress > 0:
+	elif not fallen and game.mining_progress > 0:
 		draw_set_transform(p - Vector2(0, 22), sin(game.visual_clock * 20) * 0.65 * game.facing)
 		icon("pickaxe", Vector2(game.facing * 21, -6), 32)
 		draw_set_transform(Vector2.ZERO)
-	elif Data.ITEMS[game.held_item()].has("weapon"):
+	elif not fallen and Data.ITEMS[game.held_item()].has("weapon"):
 		icon(game.held_item(), p + Vector2(game.facing * 18,-24), 28)
 	for particle in game.particles:
 		draw_rect(Rect2(particle.p, Vector2.ONE * 3), particle.color)
@@ -343,6 +363,10 @@ func draw_lighting() -> void:
 	levels.resize(grid_size.x * grid_size.y)
 	var radius: float = 160.0 if game.count_item("lantern") > 0 else 102.0
 	add_light(levels, grid_size, first_center, game.player - Vector2(0, 18), radius, 0.8)
+	if game.state == "dead" and game.fault.pending:
+		add_light(levels, grid_size, first_center, game.fault.death_actor_position() - Vector2(0, 19), 154.0, 1.05)
+	if game.fault.active and visible_world.grow(170).has_point(game.fault.priest_site):
+		add_light(levels, grid_size, first_center, game.fault.priest_site - Vector2(0, 31), 147.0, 1.03)
 
 	var boss: Dictionary = game.adventure.current_boss()
 	if not boss.is_empty():
@@ -361,18 +385,23 @@ func draw_lighting() -> void:
 	if resize:
 		light_image = Image.create(grid_size.x, grid_size.y, false, Image.FORMAT_RGBA8)
 	var daylight: float = game.daylight()
+	var ambience: float = 0.07
+	if game.fault.active:
+		daylight = 0.43
+		ambience = 0.24
 	for x in range(grid_size.x):
 		var surface_y: int = game.world.surface_at(int((first_center.x + x * LIGHT_STEP) / Data.TILE))
 		for y in range(grid_size.y):
 			var depth: float = (first_center.y + y * LIGHT_STEP) / Data.TILE - surface_y
-			var light: float = maxf(levels[y * grid_size.x + x], maxf(0.07, daylight * (1 - clampf(depth / 11, 0, 1))))
+			var light: float = maxf(levels[y * grid_size.x + x], maxf(ambience, daylight * (1 - clampf(depth / 11, 0, 1))))
 			var opacity: float = (1 - light) * 0.92 if light < 0.98 else 0.0
 			light_image.set_pixel(x, y, Color(1, 1, 1, opacity))
 	if resize:
 		light_texture = ImageTexture.create_from_image(light_image)
 	else:
 		light_texture.update(light_image)
-	draw_texture_rect(light_texture, Rect2(origin, Vector2(grid_size * LIGHT_STEP)), false, Color(0.025, 0.035, 0.07))
+	var tint := Color("160e20") if game.fault.active else Color(0.025, 0.035, 0.07)
+	draw_texture_rect(light_texture, Rect2(origin, Vector2(grid_size * LIGHT_STEP)), false, tint)
 
 func add_light(levels: PackedFloat32Array, grid_size: Vector2i, first_center: Vector2, p: Vector2, radius: float, strength: float) -> void:
 	var center: Vector2 = (p - first_center) / LIGHT_STEP
@@ -465,6 +494,8 @@ func blocks_world(p: Vector2) -> bool:
 
 func draw_ui() -> void:
 	buttons.clear()
+	if game.state == "fault_transition":
+		return
 	if game.state in ["menu", "confirm"]:
 		menu()
 		if game.state == "confirm":
@@ -479,6 +510,11 @@ func draw_ui() -> void:
 			"inventory": inventory_panel()
 			"chest": detail.chest_panel()
 			"town_npc": detail.npc_panel()
+			"fire_keeper": fault_view.draw_heal_panel()
+			"fault_priest":
+				modal("神父 · CTO", "毅川，退到我身后。故障我来解除。", "解除系统故障", "fault_purge")
+				button(Rect2(472, 425, 336, 39), "继续探索", "resume")
+			"fault_resolved": modal("系统故障已解除", game.fault.escape_text, "回到旷野", "resume")
 			"journal": detail.journal()
 			"sandbox_victory": modal("公主，终于救回来了", "终焉策划已被击败。世界和成长记录保留，旷野仍可继续建设。", "继续探索世界", "resume")
 			"merchant": merchant_panel()
@@ -490,7 +526,11 @@ func draw_ui() -> void:
 			"map": map_panel()
 			"guide": guide()
 			"paused": pause_panel()
-			"dead": modal("哦豁，完蛋。", "旅途还没结束。背包、矿洞和建筑都会保留。", "回到出生地", "respawn")
+			"dead":
+				if game.fault.pending:
+					fault_view.draw_revival()
+				else:
+					modal("哦豁，完蛋。", "旅途还没结束。背包、矿洞和建筑都会保留。", "回到出生地", "respawn")
 			"complete": modal("归途已被点亮", "毅川在这片旷野有了自己的家。你可以继续探索和建造。", "继续我的世界", "resume")
 			"recall": modal("返回出生地？", "保留所有物资与地图，传送回出生地附近。", "返回出生地", "recall")
 	draw_message()
@@ -535,7 +575,8 @@ func hud() -> void:
 	text("毅川的像素旷野", Vector2(31, 42), 19, WHITE, true)
 	var hour: int = int(game.day_fraction() * 24)
 	var minute: int = int(fposmod(game.day_fraction() * 1440, 60))
-	text("第 %d 天  ·  %02d:%02d  ·  %s" % [game.day_number(), hour, minute, "夜晚" if game.is_night() else "白昼"], Vector2(31, 67), 14, MUTED)
+	var weather: String = "浓雾" if game.fault.active else ("夜晚" if game.is_night() else "白昼")
+	text("第 %d 天  ·  %02d:%02d  ·  %s" % [game.day_number(), hour, minute, weather], Vector2(31, 67), 14, MUTED)
 	draw_rect(Rect2(32, 81, 210, 11), Color("3b4445"))
 	draw_rect(Rect2(32, 81, 210 * game.health / game.max_health(), 11), CORAL)
 	text("%d / %d" % [ceili(game.health), int(game.max_health())], Vector2(252, 92), 13, WHITE)
@@ -547,8 +588,12 @@ func hud() -> void:
 		text(part, Vector2(31, 180 + line * 24), 13, MUTED)
 		line += 1
 	box(Rect2(16, 242, 319, 51), Color(0.07, 0.13, 0.16, 0.88), EDGE)
-	text("神父到访 · 出生地附近 [%s]" % game.pad.key("X", "E") if game.merchant_present else "CTO 神父 · 每 5 个游戏日到访", Vector2(31, 264), 14, GOLD if game.merchant_present else MUTED, true)
-	text("本次库存已记录 · 击败怪物获得旧银币" if game.merchant_present else "第 %d 天到访 · 还需 %d 个游戏日" % [game.merchant_info.next_day, game.merchant_info.days], Vector2(31, 284), 11, MUTED)
+	if game.fault.active:
+		text("神父失踪 · 补给中断", Vector2(31, 264), 14, CORAL, true)
+		text("雾里还能看见提灯的光。", Vector2(31, 284), 11, MUTED)
+	else:
+		text("神父到访 · 出生地附近 [%s]" % game.pad.key("X", "E") if game.merchant_present else "CTO 神父 · 每 5 个游戏日到访", Vector2(31, 264), 14, GOLD if game.merchant_present else MUTED, true)
+		text("本次库存已记录 · 击败怪物获得旧银币" if game.merchant_present else "第 %d 天到访 · 还需 %d 个游戏日" % [game.merchant_info.next_day, game.merchant_info.days], Vector2(31, 284), 11, MUTED)
 	box(Rect2(982, 14, 282, 141), Color(0.07, 0.13, 0.16, 0.93), EDGE, 9)
 	text(game.adventure.biome_name(), Vector2(997, 38), 15, WHITE, true)
 	text("深度 %d m" % maxi(0, int((game.player.y / Data.TILE - game.world.surface_at(game.cell_at(game.player).x)) * 2)), Vector2(1170, 38), 12, MUTED)
@@ -716,8 +761,10 @@ func guide() -> void:
 		entries[7] = "方向键 ↑ 查看 Boss 成长；召唤物受前置、区域和昼夜条件限制。"
 		entries[9] = game.pad.text("", "CTO 神父每 5 个游戏日到访一次，{X} 交易；Code Review 可赢一件物资。")
 		entries[10] = game.pad.text("", "{Back} 地图，{R3} 回家，方向键 ↓ 治疗；{Start} 暂停并保存。30 秒自动保存。")
+	entries.append("首次死亡会遇到防火女。此后她每天在家提供一次疗愈。")
+	entries.append("第 10 次复活触发系统故障。找到神父或击败狮子猿即可脱离。")
 	for index in range(entries.size()):
-		text(entries[index], Vector2(216, 163 + index * 35), 17, MUTED)
+		text(entries[index], Vector2(216, 158 + index * 32), 17, MUTED)
 	button(Rect2(833, 593, 228, 39), "明白了，继续探索", "resume", 0, true)
 
 func pause_panel() -> void:
@@ -770,7 +817,9 @@ func click(p: Vector2) -> bool:
 				if game.save_world():
 					game.set_state("menu")
 			"respawn": game.respawn()
-			"recall": game.respawn()
+			"recall": game.recall_home()
+			"keeper_heal": game.fault.heal_at_home()
+			"fault_purge": game.fault.priest_purge()
 			"slot": game.selected = entry.index
 			"equip": game.equip_item(entry.item)
 			"category":

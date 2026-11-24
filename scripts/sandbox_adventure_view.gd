@@ -89,6 +89,9 @@ func background(first: Vector2i, end: Vector2i) -> void:
 		var row: int = y * Data.WIDTH
 		for x in range(first.x, end.x):
 			if walls[row + x] != 0:
+				if g.fault.active:
+					v.fault_view.draw_back_wall(Vector2i(x, y))
+					continue
 				var p := Vector2(x, y) * Data.TILE
 				v.draw_rect(Rect2(p, Vector2.ONE * Data.TILE), Color("6a584b"))
 				v.draw_rect(Rect2(p + Vector2.ONE, Vector2(22, 2)), Color("8c7158"))
@@ -116,26 +119,27 @@ func enemy(enemy: Dictionary) -> void:
 	var p: Vector2 = v.render_position(enemy.p,enemy.previous)
 	if not v.visible_world.grow(180).has_point(p):
 		return
-	var pose: int = 2 if enemy.windup > 0 else (3 if enemy.charge > 0 else int(enemy.age * 6) % 2)
-	if spec.art == "expanded":
-		pose = 1 if enemy.windup > 0 or enemy.charge > 0 else int(enemy.age * 4) % 2
-	var atlas = g.adventure.atlases.get(spec.art,g.enemy_atlas)
-	var frame: int = mini(spec.frame + pose,atlas.frames.size() - 1)
-	var facing: float = enemy.facing
-	if enemy.kind == "wolf" and pose < 3:
-		facing *= -1
-	if spec.art in ["classic","expanded"]:
-		facing *= -1
 	var tint: Color = Color("fff3cc") if enemy.flash > 0 else Color.WHITE
 	if enemy.slow > 0:
 		tint = Color("a5dbef")
-	atlas.draw(v,frame,p,spec.height,facing,tint)
+	if spec.get("fault", false):
+		v.fault_view.draw_enemy(enemy, p, tint)
+	else:
+		var pose: int = 2 if enemy.windup > 0 else (3 if enemy.charge > 0 else int(enemy.age * 6) % 2)
+		if spec.art == "expanded":
+			pose = 1 if enemy.windup > 0 or enemy.charge > 0 else int(enemy.age * 4) % 2
+		var atlas = g.adventure.atlases.get(spec.art,g.enemy_atlas)
+		var frame: int = mini(spec.frame + pose,atlas.frames.size() - 1)
+		var facing: float = enemy.facing
+		if (enemy.kind == "wolf" and pose < 3) or spec.art in ["classic","expanded"]:
+			facing *= -1
+		atlas.draw(v,frame,p,spec.height,facing,tint)
 	if enemy.windup > 0:
-		v.world_label("! 蓄力",p - Vector2(0,spec.height + 12),v.CORAL)
+		v.world_label("! " + enemy.get("fault_warning", "蓄力"),p - Vector2(0,spec.height + 12),v.CORAL)
 	if enemy.burn > 0:
 		v.icon("torch",p - Vector2(0,spec.height + 14),15)
 	if enemy.hp < enemy.max_hp:
-		var width: float = 60 if enemy.boss_index >= 0 else 34
+		var width: float = 60 if enemy.boss_index >= 0 or spec.get("fault_boss", false) else 34
 		v.draw_rect(Rect2(p - Vector2(width / 2,spec.height + 6),Vector2(width,3)),v.INK)
 		v.draw_rect(Rect2(p - Vector2(width / 2,spec.height + 6),Vector2(width * maxf(0,enemy.hp / enemy.max_hp),3)),v.CORAL)
 
@@ -186,6 +190,9 @@ func hud() -> void:
 		v.text("药水冷却 %d 秒" % ceili(g.adventure.heal_cooldown),Vector2(352,37),12,v.CORAL)
 	v.box(Rect2(16,305,319,92),Color(0.07,0.13,0.16,0.88),v.EDGE)
 	v.text("%s · Boss %d / 8" % ["困难世界" if g.adventure.hardmode() else "探索世界",g.adventure.stage()],Vector2(31,330),16,v.GOLD,true)
+	if g.fault.keeper_unlocked:
+		var count: String = "%d" % g.fault.leaks if g.fault.active else "%d / %d" % [g.fault.leaks, g.fault.LIMIT]
+		v.text("内存泄漏 " + count, Vector2(216, 330), 13, v.CORAL)
 	v.text("护甲 %d   饰品 %d / 5   生命强化 %d" % [g.adventure.defense(),g.adventure.accessories.size(),g.adventure.life_upgrades],Vector2(31,357),12,v.MUTED)
 	v.button(Rect2(31,365,140,24),"成长 / 图鉴 · " + g.pad.key("↑", "T"),"journal")
 	v.button(Rect2(183,365,135,24),"检查住房 · " + g.pad.key("L3", "F7"),"house_check")

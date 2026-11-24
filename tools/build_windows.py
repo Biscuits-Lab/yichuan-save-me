@@ -92,7 +92,10 @@ def write_bundle(exe: Path, bundle: Path) -> None:
     with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.write(exe, exe.name)
         archive.write(ROOT / "README.md", "README.md")
-        for document in ("sandbox-mode.md", "sandbox-self-check.md", "sandbox-adventure.md", "sandbox-priest-imagegen-prompt.txt"):
+        for document in (
+            "sandbox-mode.md", "sandbox-self-check.md", "sandbox-adventure.md",
+            "sandbox-priest-imagegen-prompt.txt", "sandbox-system-fault-imagegen.md",
+        ):
             archive.write(ROOT / "docs" / document, "docs/" + document)
         for license_path in (ROOT / "assets/fonts").glob("*-OFL.txt"):
             archive.write(license_path, "licenses/" + license_path.name)
@@ -104,8 +107,8 @@ def main() -> None:
     fetch_template()
     build = ROOT / "build"
     build.mkdir(exist_ok=True)
-    exe = build / "windows-v0.6.1/毅川救我.exe"
-    bundle = build / "毅川救我-v0.6.1-地牢与沙盒-Windows-x64.zip"
+    exe = build / "windows-v0.7.1/毅川救我.exe"
+    bundle = build / "毅川救我-v0.7.1-地牢与沙盒-Windows-x64.zip"
     with tempfile.TemporaryDirectory(prefix=".windows-build-", dir=build) as staging:
         staged_exe = Path(staging) / exe.name
         run_godot(

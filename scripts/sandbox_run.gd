@@ -5,6 +5,7 @@ const View = preload("res://scripts/sandbox_view.gd")
 const Atlas = preload("res://scripts/sprite_atlas.gd")
 const Catalog = preload("res://scripts/sandbox_catalog.gd")
 const Adventure = preload("res://scripts/sandbox_adventure.gd")
+const Fault = preload("res://scripts/sandbox_fault.gd")
 const Audio = preload("res://scripts/audio.gd")
 const Gamepad = preload("res://scripts/gamepad.gd")
 const REACH: float = 132.0
@@ -52,6 +53,7 @@ var save_path: String = "user://sandbox-v1.save"
 var save_available: bool = false
 var last_saved: String = ""
 var save_error: String = ""
+var window_focused: bool = true
 var message: String = ""
 var message_time: float = 0.0
 var camera: Camera2D
@@ -66,6 +68,7 @@ var priest_atlas: RefCounted
 var enemy_atlas: RefCounted
 var audio: Node
 var adventure: RefCounted
+var fault: RefCounted
 var merchant_present: bool = false
 var merchant_info: Dictionary = {}
 var merchant_visit: int = 0
@@ -96,6 +99,7 @@ func _ready() -> void:
 	priest_atlas = Atlas.new(load("res://assets/generated/sandbox/friday-priest.png"), 1, 1)
 	enemy_atlas = Atlas.new(load("res://assets/generated/dungeon/enemies.png"), 4, 4)
 	adventure = Adventure.new(self)
+	fault = Fault.new(self)
 	audio = Audio.new()
 	add_child(audio)
 	add_child(pad)
@@ -156,6 +160,7 @@ func setup_input() -> void:
 func start_world(chosen_seed: int = 0) -> void:
 	world.generate(chosen_seed if chosen_seed != 0 else rng.randi_range(1, 99999999))
 	adventure.reset()
+	fault.reset()
 	adventure.structures.generate_features()
 	inventory = {"pickaxe":1, "sword":1, "dirt":20, "torch":8, "potion":3, "coin":20}
 	stats = {"mined":0, "wood":0, "placed":0, "kills":0, "crafted":0}
@@ -515,6 +520,8 @@ func attack() -> void:
 		var diff: Vector2 = enemy.p - Vector2(0, 12) - origin
 		if diff.length() < spec.reach and diff.x * facing > -18 and line_clear(cell_at(enemy.p - Vector2(0, 12))):
 			adventure.damage_enemy(enemy,spec.damage,player)
+			if state != "playing":
+				return
 
 func hurt(amount: float, source: Vector2) -> void:
 	if state != "playing" or hurt_time > 0:
@@ -528,8 +535,10 @@ func hurt(amount: float, source: Vector2) -> void:
 	audio.sfx("hurt")
 	if health <= 0:
 		set_state("dead")
+		fault.record_death()
 		audio.sfx("dead")
 		pad.pulse("death")
+		save_world()
 	else:
 		pad.pulse("hurt", clampf(0.45 + amount / max_health(), 0.0, 1.0))
 
@@ -578,21 +587,40 @@ func safe_spawn() -> Vector2:
 	return Vector2((at.x + 0.5) * Data.TILE, at.y * Data.TILE - 0.01)
 
 func respawn() -> void:
-	player = safe_spawn()
+	if state != "dead":
+		return
+	var assisted: bool = fault.pending
+	player = fault.revive_position() if assisted else safe_spawn()
 	previous_player = player
 	health = max_health()
 	reset_transients()
-	state = "playing"
+	set_state("playing")
+	if assisted:
+		hurt_time = 3.0
+	heal_delay = 0
 	camera.position = player + Vector2(0, -80)
 	camera.reset_physics_interpolation()
-	notify("毅川：来了。背包和建造进度都还在。")
+	if fault.finish_revival():
+		return
+	notify("防火女：火还没熄。醒过来吧。" if assisted else "毅川：来了。背包和建造进度都还在。")
+	save_world()
+
+func recall_home() -> void:
+	if state != "recall":
+		return
+	player = safe_spawn()
+	previous_player = player
+	reset_transients()
+	set_state("playing")
+	camera.position = player + Vector2(0, -80)
+	camera.reset_physics_interpolation()
 	save_world()
 
 func refresh_merchant() -> void:
 	var was_present: bool = merchant_present
 	merchant_info = Data.merchant_schedule(day_number())
-	merchant_present = merchant_info.present
-	if merchant_present and (merchant_visit != merchant_info.day or merchant_stock.size() != Data.OFFERS.size()):
+	merchant_present = merchant_info.present and not fault.active
+	if merchant_info.present and (merchant_visit != merchant_info.day or merchant_stock.size() != Data.OFFERS.size()):
 		merchant_visit = merchant_info.day
 		merchant_stock.clear()
 		for offer in Data.OFFERS:
@@ -617,6 +645,8 @@ func interact() -> void:
 	if state != "playing":
 		return
 	refresh_merchant()
+	if fault.interact():
+		return
 	if can_trade():
 		set_state("merchant")
 		audio.sfx("select")
@@ -750,11 +780,19 @@ func _process(delta: float) -> void:
 	visual_clock += delta
 	update_review(delta)
 	message_time = maxf(0, message_time - delta)
+	view.fault_view.sync_fog()
+	view.fault_view.sync_transition()
 	view.queue_redraw()
 	sky.queue_redraw()
 	ui.queue_redraw()
 
 func _physics_process(delta: float) -> void:
+	if state == "fault_transition":
+		fault.transition_tick(delta)
+		return
+	if state == "dead" and fault.pending:
+		fault.death_tick(delta)
+		return
 	if state != "playing":
 		return
 	elapsed += delta
@@ -809,11 +847,14 @@ func _physics_process(delta: float) -> void:
 		return
 	enemy_timer -= delta
 	if enemy_timer <= 0:
-		enemy_timer = 3.5 if adventure.blood_moon else (6.0 if is_night() else 12.0)
+		enemy_timer = 4.4 if fault.active else (3.5 if adventure.blood_moon else (6.0 if is_night() else 12.0))
 		spawn_enemy()
 	update_enemies(delta)
-	if state == "playing":
-		adventure.tick(delta)
+	if state != "playing":
+		return
+	adventure.tick(delta)
+	if state != "playing":
+		return
 	for particle in particles.duplicate():
 		particle.life -= delta
 		particle.p += particle.v * delta
@@ -903,6 +944,11 @@ func set_state(value: String) -> void:
 	previous_player = player
 
 func objective() -> Dictionary:
+	if fault.active:
+		return {
+			"title":"里世界 · 系统故障",
+			"text":"神父 %s，找到他可解除故障。\n狮子猿 %s，击倒它也能出去。" % [fault.location_hint(fault.priest_site), fault.location_hint(fault.ape_site)]
+		}
 	if adventure:
 		return adventure.objective()
 	if completed:
@@ -916,10 +962,12 @@ func objective() -> Dictionary:
 	return {"title":"04 / 点亮归途", "text":"寻找深处的大地之心与辉光水晶。\n制作归途信标，放在地表。"}
 
 func save_world() -> bool:
-	if inventory.is_empty():
+	# Only the fully applied destination can replace the last save during a transition.
+	if inventory.is_empty() or (state == "fault_transition" and not fault.transition_swapped):
 		return false
 	var data: Dictionary = {"version":1, "seed":world.seed_value, "tiles":world.tiles, "explored":world.explored, "surface":world.surface, "spawn":world.spawn, "heart":world.heart_cell, "inventory":inventory, "hotbar":hotbar, "pick":pick_tier, "sword":sword_tier, "elapsed":elapsed, "player":player, "health":health, "selected":selected, "stats":stats, "completed":completed, "merchant_visit":merchant_visit, "merchant_stock":merchant_stock, "review_completed_visit":review_completed_visit, "review_reward_pending":review_reward_pending}
 	data["adventure"] = adventure.save_data()
+	data["fault"] = fault.save_data()
 	var file := FileAccess.open(save_path + ".tmp", FileAccess.WRITE)
 	if file == null:
 		return failed_save("无法写入存档")
@@ -1013,6 +1061,9 @@ func read_save(path: String) -> Dictionary:
 			return {}
 	if value.has("adventure") and not adventure.valid_save(value.adventure):
 		return {}
+	var saved_day: int = floori(0.32 + float(value.elapsed) / Data.DAY_SECONDS) + 1
+	if value.has("fault") and not fault.valid_save(value.fault, float(value.health), saved_day):
+		return {}
 	return value
 
 func load_world() -> bool:
@@ -1056,14 +1107,20 @@ func load_world() -> bool:
 	merchant_stock.assign(data.merchant_stock)
 	review_completed_visit = data.get("review_completed_visit", 0)
 	review_reward_pending = data.get("review_reward_pending", false)
+	fault.load_data(data.get("fault", {}))
 	reset_transients()
-	if data.health <= 0:
+	if fault.pending:
+		health = 0
+		if not world.valid(cell_at(player)):
+			player = safe_spawn()
+	elif data.health <= 0:
 		health = max_health()
 		player = safe_spawn()
 	elif not body_free(player) or not world.valid(cell_at(player)):
 		player = safe_spawn()
 	previous_player = player
-	state = "playing"
+	set_state("dead" if fault.pending else "playing")
+	fault.refresh_keeper()
 	last_saved = ""
 	save_available = true
 	refresh_merchant()
@@ -1075,21 +1132,35 @@ func load_world() -> bool:
 	return true
 
 func leave_mode() -> void:
-	if not inventory.is_empty() and not save_world():
+	if not save_before_exit():
 		return
 	get_tree().auto_accept_quit = true
 	get_tree().change_scene_to_file("res://scenes/main.tscn")
 
+func save_before_exit() -> bool:
+	if state == "fault_transition":
+		fault.swap_worlds()
+	return inventory.is_empty() or save_world()
+
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
-		if inventory.is_empty() or save_world():
+		if save_before_exit():
 			get_tree().quit()
-	elif what == NOTIFICATION_WM_WINDOW_FOCUS_OUT and state == "playing":
-		set_state("paused")
+	elif what == NOTIFICATION_WM_WINDOW_FOCUS_IN:
+		window_focused = true
+	elif what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		window_focused = false
+		if state == "playing":
+			set_state("paused")
 
 func _unhandled_input(event: InputEvent) -> void:
 	var pad_was_active: bool = pad.active
 	pad.observe(event)
+	if state == "fault_transition":
+		if event is InputEventMouse:
+			pointer = event.position
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventJoypadButton or event is InputEventJoypadMotion:
 		if not pad_was_active and pad.active:
 			left_held = false
@@ -1164,7 +1235,7 @@ func keyboard_shortcut(code: int) -> void:
 	elif code == KEY_ESCAPE:
 		match state:
 			"playing": set_state("paused")
-			"paused", "inventory", "merchant", "map", "guide", "complete", "recall", "chest", "town_npc", "journal", "sandbox_victory": set_state("playing")
+			"paused", "inventory", "merchant", "map", "guide", "complete", "recall", "chest", "town_npc", "journal", "sandbox_victory", "fire_keeper", "fault_priest", "fault_resolved": set_state("playing")
 			"confirm": set_state("menu")
 			"review", "review_failed", "review_reward": set_state("merchant")
 			"menu": leave_mode()

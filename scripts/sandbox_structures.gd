@@ -400,7 +400,7 @@ func update_town() -> void:
 			p = game.safe_spawn()
 		npcs.append({"id":available[i],"p":p,"housed":i < homes.size()})
 
-func interact() -> bool:
+func nearby_interactable() -> Vector2i:
 	var at: Vector2i = game.cell_at(game.player - Vector2(0, 12))
 	var nearest := Vector2i(-1, -1)
 	var distance: float = 80
@@ -412,6 +412,10 @@ func interact() -> bool:
 				if gap < distance:
 					distance = gap
 					nearest = c
+	return nearest
+
+func interact() -> bool:
+	var nearest: Vector2i = nearby_interactable()
 	if nearest.x >= 0:
 		var tile: int = game.world.tile(nearest)
 		match tile:
@@ -445,6 +449,8 @@ func interact() -> bool:
 						if not spawn.is_finite() or p.distance_squared_to(game.cell_center(nearest)) < spawn.distance_squared_to(game.cell_center(nearest)):
 							spawn = p
 					game.world.spawn = spawn
+					if game.fault:
+						game.fault.refresh_keeper()
 					game.notify("重生点已设到床边。")
 				else:
 					game.notify(house.reason)

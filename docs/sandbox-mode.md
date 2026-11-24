@@ -4,7 +4,19 @@
 
 当前主场景为 `scenes/main.tscn`，由 `scripts/dungeon_run.gd` 驱动；`dungeon_data.gd` 生成俯视房间与走廊，`dungeon_view.gd` 负责世界和固定屏幕 UI。它的战斗、碰撞、导航、房间封路和装备交易都以俯视平面为前提。早期 `game.gd` / `samurai.gd` 虽然提供横版跳跃，但依赖关卡、房门和旧战斗状态，直接复用会让可破坏地形与旧逻辑互相牵制。
 
-新增模式因此采用独立场景、数据和运行状态，通过原主菜单按钮或 B 进入。复用毅川、怪物、字体、音效和图集切片工具，地牢玩法与纪录使用原来的入口和存储。当前版本为 0.6.1；成长、住房、液体、装备和怪物扩充见 [sandbox-adventure.md](sandbox-adventure.md)。
+新增模式因此采用独立场景、数据和运行状态，通过原主菜单按钮或 B 进入。复用毅川、怪物、字体、音效和图集切片工具，地牢玩法与纪录使用原来的入口和存储。当前版本为 0.7.1，成长、住房、液体、装备和怪物扩充见 [sandbox-adventure.md](sandbox-adventure.md)。
+
+## 防火女与系统故障
+
+主角第一次死亡时，长发防火女出现在身边，约 1.8 秒后复活主角并恢复全部生命。如果死亡位置缺少净空或处在危险液体中，会先找附近的安全站位。复活后，她在主角家的床边提供疗愈。没有设置床时，她会在初始营地等候。靠近按 E 或手柄交互键，每个游戏日可免费回满一次生命。满血时不消耗机会，读档后沿用当天的使用记录。回城仅传送，不回复生命或推进复活计数。
+
+死亡令「内存泄漏」增加 1 层，第 10 次复活后地图转入里世界「系统故障」。天气变为浓雾，地形和墙壁显现血肉纹理，普通刷新改为夜班尸、窥雾复眼、多手林孽、蜕形体和异色漂影。怪物的生命、伤害和移速随已完成的主线阶段加强。神父的日常补给暂停，原有建筑、库存、存档和地形编辑继续使用当前世界。
+
+左侧目标栏分别提示神父和狮子猿的方向。循暖灯可找到神父，请他解除故障。接近另一侧时，狮子猿会从雾里现身，用扑袭、重拳和吼叫出招。击败狮子猿也能恢复世界，并得到 120 旧银币。两种方式都会清除本轮泄漏，保留已解锁的防火女。退出后再次累计 10 次复活会开启新一轮。已在进行的普通入侵会在脱离后继续。
+
+进出里世界都有约 2.25 秒的过渡。雾幕向毅川收拢并显示故障状态，完全遮住画面时切换景色、怪物和神父，随后从中心揭开目标世界。两种离开方式有各自的提示。过渡期间停止输入、战斗和游戏日计时。切换时自动保存，正常关窗会先完成切换再存档，读档直接进入已保存的世界。
+
+旧存档从零层泄漏开始。死亡动画之间保存会恢复待复活状态，已进入里世界的存档会恢复故障、出口位置和狮子猿剩余生命。正式素材与内置 imagegen 提示词见 [sandbox-system-fault-imagegen.md](sandbox-system-fault-imagegen.md)。
 
 ## 实现结构
 
@@ -54,8 +66,10 @@
 
 ```powershell
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file .tools/sandbox-tests.log --script tools/test_sandbox.gd -- --no-audio
+.\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file .tools/fault-test.log --script tools/test_sandbox_fault.gd -- --no-audio
 .\.tools\godot\Godot_v4.5.2-stable_win64_console.exe --headless --path . --log-file .tools/dungeon-regression.log --script tools/test_dungeon.gd -- --no-audio
 python tools/run_godot_offscreen.py -- .tools/godot/Godot_v4.5.2-stable_win64_console.exe --path . --audio-driver Dummy --log-file .tools/sandbox-render.log --script tools/render_sandbox.gd -- --no-audio
+python tools/run_godot_offscreen.py -- .tools/godot/Godot_v4.5.2-stable_win64_console.exe --path . --audio-driver Dummy --log-file .tools/fault-render.log --script tools/render_sandbox_fault.gd -- --no-audio
 python tools/run_godot_offscreen.py -- .tools/godot/Godot_v4.5.2-stable_win64_console.exe --path . --audio-driver Dummy --log-file .tools/sandbox-audit.log --script tools/test_sandbox_regressions.gd -- --no-audio
 python tools/build_windows.py
 ```

@@ -2,8 +2,8 @@
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
-if exist "build\windows-v0.6.1\毅川救我.exe" (
-  start "" "build\windows-v0.6.1\毅川救我.exe"
+if exist "build\windows-v0.7.1\毅川救我.exe" (
+  start "" "build\windows-v0.7.1\毅川救我.exe"
   exit /b 0
 )
 set "engine=.tools\godot\Godot_v4.5.2-stable_win64.exe"

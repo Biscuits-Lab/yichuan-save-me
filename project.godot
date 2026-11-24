@@ -3,8 +3,8 @@ config_version=5
 
 [application]
 config/name="毅川救我"
-config/version="0.6.1"
-config/description="七层地牢与 2D 沙盒双模式。像素旷野加入住房、装备、19 类怪物、8 场 Boss 与困难世界成长；CTO 每五日到访。"
+config/version="0.7.1"
+config/description="七层地牢与 2D 沙盒双模式。像素旷野新增防火女、内存泄漏和里世界「系统故障」。"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.5", "GL Compatibility")
 config/icon="res://assets/icon.svg"

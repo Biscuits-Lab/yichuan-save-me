@@ -157,15 +157,15 @@ func equip(id: String) -> bool:
 	game.notify("装备已更新：" + spec.name)
 	return true
 
-func spawn(kind: String, p: Vector2, boss_index: int = -1) -> Dictionary:
-	if game.enemies.size() >= 28 and boss_index < 0:
+func spawn(kind: String, p: Vector2, boss_index: int = -1, custom_spec: Dictionary = {}) -> Dictionary:
+	if game.enemies.size() >= 28 and boss_index < 0 and not custom_spec.get("fault_boss", false):
 		return {}
-	var spec: Dictionary = Catalog.ENEMIES.get(kind,Catalog.ENEMIES.slime).duplicate()
+	var spec: Dictionary = custom_spec if not custom_spec.is_empty() else Catalog.ENEMIES.get(kind,Catalog.ENEMIES.slime).duplicate()
 	if boss_index >= 0:
 		spec = Catalog.BOSSES[boss_index].duplicate()
 		spec.ai = "boss"
 		spec.speed = 145
-	var strength: float = 1.8 if hardmode() and boss_index < 0 else 1.0
+	var strength: float = 1.8 if hardmode() and boss_index < 0 and not spec.get("fault", false) else 1.0
 	serial += 1
 	var enemy: Dictionary = {"id":serial,"kind":kind,"spec":spec,"boss_index":boss_index,"p":p,"previous":p,"v":Vector2.ZERO,"hp":float(spec.hp) * strength,"max_hp":float(spec.hp) * strength,"jump":0.3,"timer":game.rng.randf_range(0.7,1.4),"windup":0.0,"charge":0.0,"aim":Vector2.LEFT,"flash":0.0,"age":0.0,"facing":-1.0,"dark":game.is_night(),"burn":0.0,"burn_tick":0.0,"slow":0.0,"attack":0}
 	game.enemies.append(enemy)
@@ -180,6 +180,9 @@ func find_spawn(x: int, flying: bool) -> Vector2:
 	return Vector2.INF
 
 func natural_spawn() -> void:
+	if game.fault.active:
+		game.fault.spawn_enemy()
+		return
 	if game.enemies.size() >= (22 if blood_moon or not event.is_empty() else 12):
 		return
 	var pool: Array = {"forest":["slime","ugs","splitter"],"desert":["ugs","charger","net"],"snow":["slime","ranged","p4"],"jungle":["wolf","gc","leak","ropehead"],"corruption":["script","p4","splitter","charger"],"cavern":["ddc","ranged","shader","script"],"underworld":["live","nanite","lumen","shader"],"ocean":["slime","net","lumen"]}[biome(game.player)].duplicate()
@@ -214,7 +217,10 @@ func damage_enemy(enemy: Dictionary, damage: float, source: Vector2, piercing: b
 	enemy.hp -= damage
 	enemy.flash = 0.15
 	var side: float = signf(enemy.p.x - source.x)
-	enemy.v = Vector2(side * (85 if enemy.boss_index >= 0 else 210),-150)
+	if not enemy.spec.get("fault_boss", false):
+		enemy.v = Vector2(side * (85 if enemy.boss_index >= 0 else 210),-150)
+	elif enemy.hp > 0:
+		game.fault.boss_hp = enemy.hp
 	game.burst(enemy.p - Vector2(0,15),Color("c0e0bf"),5)
 	game.float_text(str(roundi(damage)),enemy.p - Vector2(0,35),Color("f0dbad"))
 	if enemy.hp <= 0:
@@ -227,6 +233,9 @@ func enemy_died(enemy: Dictionary) -> void:
 	game.enemies.erase(enemy)
 	bestiary[enemy.kind] = int(bestiary.get(enemy.kind,0)) + 1
 	game.stats.kills = int(game.stats.get("kills",0)) + 1
+	if enemy.spec.get("fault_boss", false):
+		game.fault.exit(true)
+		return
 	game.add_item("coin",game.rng.randi_range(3,7) if enemy.boss_index < 0 else 80 + enemy.boss_index * 35)
 	game.pad.pulse("victory" if enemy.boss_index >= 0 else "kill")
 	if enemy.boss_index >= 0:
@@ -293,6 +302,17 @@ func update_enemies(delta: float) -> void:
 			if enemy.get("event_member",false) and not event.is_empty():
 				event_left += 1
 			game.enemies.erase(enemy)
+			continue
+		if enemy.spec.get("fault", false):
+			game.fault.update_enemy(enemy, delta)
+			var ape: bool = enemy.spec.get("fault_boss", false)
+			var center: Vector2 = enemy.p - Vector2(0, 34 if ape else 19)
+			var torso: Vector2 = game.player - Vector2(0, 18)
+			var touched: bool = center.distance_to(torso) < 31
+			if ape:
+				touched = Rect2(center - Vector2(32, 34), Vector2(64, 72)).has_point(torso)
+			if touched:
+				game.hurt(float(enemy.spec.damage), enemy.p)
 			continue
 		var direction: float = signf(game.player.x - enemy.p.x)
 		if direction != 0:
@@ -489,7 +509,7 @@ func update_shots(delta: float) -> void:
 					hydrate(enemy)
 					if shot.hits.has(enemy.id):
 						continue
-					var height: float = 80 if enemy.boss_index >= 0 else 34
+					var height: float = 80 if enemy.boss_index >= 0 or enemy.spec.get("fault_boss", false) else 34
 					if Rect2(enemy.p - Vector2(height * 0.4,height),Vector2(height * 0.8,height)).grow(3).has_point(shot.p):
 						shot.hits[enemy.id] = true
 						enemy.burn = maxf(enemy.burn,shot.burn)
@@ -566,7 +586,9 @@ func use_item(id: String) -> bool:
 				if use == "meal":
 					food_buff = 120
 		"invasion":
-			if not event.is_empty() or current_boss() != {}:
+			if game.fault.active or not event.is_empty() or current_boss() != {}:
+				if game.fault.active:
+					game.notify("系统故障解除后才能使用入侵旗。")
 				return false
 			event = "故障入侵"
 			event_left = 24
@@ -598,11 +620,13 @@ func fish_action() -> bool:
 
 func current_boss() -> Dictionary:
 	for enemy in game.enemies:
-		if enemy.get("boss_index",-1) >= 0:
+		if enemy.get("boss_index",-1) >= 0 or enemy.get("spec",{}).get("fault_boss", false):
 			return enemy
 	return {}
 
 func summon_reason(index: int) -> String:
+	if game.fault.active:
+		return "先解除系统故障"
 	if index < 0 or index >= Catalog.BOSSES.size():
 		return "无效召唤物"
 	var boss: Dictionary = Catalog.BOSSES[index]
@@ -682,6 +706,7 @@ func tick(delta: float) -> void:
 	structures.tick(delta)
 	if game.state != "playing":
 		return
+	game.fault.tick(delta)
 	mana_delay = maxf(0,mana_delay - delta)
 	heal_cooldown = maxf(0,heal_cooldown - delta)
 	food_cooldown = maxf(0,food_cooldown - delta)
@@ -714,6 +739,9 @@ func tick(delta: float) -> void:
 		if not closest.is_empty() and companion_p.distance_to(closest.p) < 55 and companion_cooldown <= 0:
 			companion_cooldown = 0.65
 			damage_enemy(closest,26 + stage() * 3,companion_p)
+	if game.fault.active or game.state != "playing":
+		blood_moon = false
+		return
 	if game.is_night() and game.day_number() % 4 == 0 and last_blood_day != game.day_number():
 		last_blood_day = game.day_number()
 		game.notify("血色加班夜：怪物刷新加快，守住房屋！")
